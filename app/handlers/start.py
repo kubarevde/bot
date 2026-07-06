@@ -2,7 +2,7 @@ from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-from app.keyboards.main_menu import main_menu_keyboard
+from app.keyboards.main_menu import main_menu_keyboard, admin_menu_keyboard
 from app.services.sheets import SheetsClient
 
 router = Router()
@@ -18,8 +18,10 @@ async def cmd_start(message: Message, sheets: SheetsClient) -> None:
         )
         return
 
+    keyboard = admin_menu_keyboard() if sheets.is_admin(message.from_user.id) else main_menu_keyboard()
+
     await message.answer(
         f"👋 Привет, {employee.get('employee_name', message.from_user.first_name)}!\n\n"
         "Используйте кнопки ниже для учёта рабочего времени.",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=keyboard,
     )
