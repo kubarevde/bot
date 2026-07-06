@@ -55,7 +55,18 @@ class SheetsClient:
             if str(row.get("telegram_id", "")).strip() == str(telegram_id):
                 return row
         return None
-
+        
+    def is_admin(self, telegram_id: int) -> bool:
+        employee = self.get_employee_by_telegram(telegram_id)
+        return bool(employee and str(employee.get("role", "")).strip().lower() == "admin")
+        
+    def get_active_shifts(self) -> list[dict]:
+        records = self._work_log_sheet.get_all_records()
+        return [
+            row for row in records
+            if str(row.get("status", "")).strip().lower() == "open"
+        ]
+        
     def has_open_shift(self, telegram_id: int) -> bool:
         return self.get_open_shift_row_index(telegram_id) is not None
 
