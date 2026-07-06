@@ -1,0 +1,18 @@
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+def main_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🟢 Начал работу")],
+            [KeyboardButton(text="🔴 Закончил работу")],
+            [KeyboardButton(text="📊 Мой статус")],
+            [KeyboardButton(text="📅 Сегодня")],
+        ],
+        resize_keyboard=True,
+    )
+
+def cancel_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="❌ Отмена")]],
+        resize_keyboard=True,
+    )
