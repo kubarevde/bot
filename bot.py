@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import settings
-from app.handlers import start, work_start, work_end, status
+from app.handlers import start, work_start, work_end, status, admin
 from app.services.sheets import SheetsClient
 
 logging.basicConfig(
@@ -35,6 +35,7 @@ async def main() -> None:
     dp.include_router(work_start.router)
     dp.include_router(work_end.router)
     dp.include_router(status.router)
+    dp.include_router(admin.router)
 
     logging.info("Bot started. Polling...")
     await dp.start_polling(bot)
