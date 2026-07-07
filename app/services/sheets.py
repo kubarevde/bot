@@ -81,23 +81,27 @@ class SheetsClient:
         return None
 
     def close_shift(
-        self,
-        row_index: int,
-        end_time: str,
-        description: str,
-        comment: str,
-        duration_raw: int,
-        duration_rounded: float,
-    ) -> None:
-        row_values = self._work_log_sheet.row_values(row_index)
-        while len(row_values) < 15:
-            row_values.append("")
+    self,
+    row_index: int,
+    end_time: str,
+    description: str,
+    comment: str,
+    duration_raw: int,
+    duration_rounded: float,
+) -> None:
+    row_values = self._work_log_sheet.row_values(row_index)
 
-        row_values[6] = end_time
-        row_values[10] = description
-        row_values[11] = comment
-        row_values[12] = "closed"
-        row_values[13] = str(duration_raw)
-        row_values[14] = str(duration_rounded)
+    while len(row_values) < 17:
+        row_values.append("")
 
-        self._work_log_sheet.update(f"A{row_index}:O{row_index}", [row_values])
+    row_values[6] = end_time                  # end_time
+    row_values[10] = description             # description
+    row_values[11] = comment                 # comment
+    row_values[12] = "closed"                # status
+    row_values[13] = str(duration_raw)       # duration_raw_minutes
+    row_values[14] = str(duration_rounded)   # duration_rounded_hours
+
+    self._work_log_sheet.update(
+        f"A{row_index}:Q{row_index}",
+        [row_values[:17]]
+    )
