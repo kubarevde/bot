@@ -55,18 +55,19 @@ class SheetsClient:
             if str(row.get("telegram_id", "")).strip() == str(telegram_id):
                 return row
         return None
-        
+
     def is_admin(self, telegram_id: int) -> bool:
         employee = self.get_employee_by_telegram(telegram_id)
         return bool(employee and str(employee.get("role", "")).strip().lower() == "admin")
-        
+
     def get_active_shifts(self) -> list[dict]:
         records = self._work_log_sheet.get_all_records()
         return [
-            row for row in records
+            row
+            for row in records
             if str(row.get("status", "")).strip().lower() == "open"
         ]
-        
+
     def has_open_shift(self, telegram_id: int) -> bool:
         return self.get_open_shift_row_index(telegram_id) is not None
 
@@ -81,27 +82,27 @@ class SheetsClient:
         return None
 
     def close_shift(
-    self,
-    row_index: int,
-    end_time: str,
-    description: str,
-    comment: str,
-    duration_raw: int,
-    duration_rounded: float,
-) -> None:
-    row_values = self._work_log_sheet.row_values(row_index)
+        self,
+        row_index: int,
+        end_time: str,
+        description: str,
+        comment: str,
+        duration_raw: int,
+        duration_rounded: float,
+    ) -> None:
+        row_values = self._work_log_sheet.row_values(row_index)
 
-    while len(row_values) < 17:
-        row_values.append("")
+        while len(row_values) < 17:
+            row_values.append("")
 
-    row_values[6] = end_time                  # end_time
-    row_values[10] = description             # description
-    row_values[11] = comment                 # comment
-    row_values[12] = "closed"                # status
-    row_values[13] = str(duration_raw)       # duration_raw_minutes
-    row_values[14] = str(duration_rounded)   # duration_rounded_hours
+        row_values[6] = end_time
+        row_values[10] = description
+        row_values[11] = comment
+        row_values[12] = "closed"
+        row_values[13] = str(duration_raw)
+        row_values[14] = str(duration_rounded)
 
-    self._work_log_sheet.update(
-        f"A{row_index}:Q{row_index}",
-        [row_values[:17]]
-    )
+        self._work_log_sheet.update(
+            f"A{row_index}:Q{row_index}",
+            [row_values[:17]],
+        )
