@@ -1,4 +1,7 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+TZ = ZoneInfo("Asia/Bangkok")
 
 from aiogram import F, Router
 from aiogram.types import Message
@@ -26,7 +29,7 @@ async def my_status(message: Message, sheets: SheetsClient) -> None:
     if start_time_str:
         try:
             start_dt = datetime.fromisoformat(start_time_str)
-            delta = datetime.now() - start_dt
+            delta = datetime.now(TZ) - start_dt
             minutes = int(delta.total_seconds() // 60)
             elapsed = f"{minutes // 60}ч {minutes % 60}м"
         except ValueError:
