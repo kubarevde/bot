@@ -71,8 +71,8 @@ async def work_start_location(message: Message, state: FSMContext, sheets: Sheet
 @router.message(StartWork.geo, F.location)
 async def work_start_geo_location(message: Message, state: FSMContext) -> None:
     await state.update_data(
-        latitude=message.location.latitude,
-        longitude=message.location.longitude,
+        latitude=f"{message.location.latitude:.6f}",
+        longitude=f"{message.location.longitude:.6f}",
     )
     await state.set_state(StartWork.work_type)
     await message.answer("🔧 Выбери тип работы:", reply_markup=work_type_keyboard())
