@@ -3,12 +3,31 @@ from aiogram.types import Message
 
 from app.keyboards.main_menu import admin_menu_keyboard
 from app.services.sheets import SheetsClient
+from app.utils.datetime_fmt import human_dt
 
 router = Router()
 
 
-def google_maps_link(latitude: str, longitude: str) -> str:
-    return f"https://maps.google.com/?q={latitude},{longitude}"
+def normalize_coord(value) -> str:
+    if value is None:
+        return ""
+
+    s = str(value).strip().replace(" ", "").replace(",", ".")
+    if not s:
+        return ""
+
+    try:
+        return f"{float(s):.6f}"
+    except Exception:
+        return ""
+
+
+def google_maps_link(latitude, longitude) -> str:
+    lat = normalize_coord(latitude)
+    lon = normalize_coord(longitude)
+    if not lat or not lon:
+        return ""
+    return f"https://maps.google.com/?q={lat},{lon}"
 
 
 @router.message(F.text == "👥 Кто на смене")
@@ -30,15 +49,17 @@ async def who_is_working(message: Message, sheets: SheetsClient) -> None:
         employee_name = row.get("employee_name", "—")
         location = row.get("location", "—")
         work_type = row.get("work_type", "—")
-        start_time = row.get("start_time", "—")
-        latitude = str(row.get("latitude", "")).strip()
-        longitude = str(row.get("longitude", "")).strip()
+        start_time = human_dt(row.get("start_time", ""))
 
-        if latitude and longitude:
-            map_link = google_maps_link(latitude, longitude)
+        latitude = row.get("latitude", "")
+        longitude = row.get("longitude", "")
+
+        map_link = google_maps_link(latitude, longitude)
+
+        if map_link:
             geo_text = f'<a href="{map_link}">📍 Открыть карту</a>'
         else:
-            geo_text = "📍 Геометка не указана"
+            geo_text = "📍 Геометка не указана или записана некорректно"
 
         lines.append(
             f"👤 <b>{employee_name}</b>\n"
