@@ -1,5 +1,8 @@
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+TZ = ZoneInfo("Asia/Bangkok")
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -34,7 +37,7 @@ async def work_start_begin(message: Message, state: FSMContext, sheets: SheetsCl
         )
         return
 
-    await state.update_data(employee=employee, start_time=datetime.now().isoformat(timespec="seconds"))
+    await state.update_data(employee=employee, start_time=datetime.now(TZ).isoformat(timespec="seconds"))
     await state.set_state(StartWork.location)
     await message.answer(
         "📍 Где работаешь? Укажи объект или локацию:",
@@ -93,7 +96,7 @@ async def work_start_comment(message: Message, state: FSMContext, sheets: Sheets
 
     data = await state.get_data()
     employee = data["employee"]
-    now = datetime.now()
+    now = datetime.now(TZ)
     comment = "" if message.text.lower() in ("нет", "no", "-") else message.text
 
     row = [
