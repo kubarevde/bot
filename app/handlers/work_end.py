@@ -1,48 +1,55 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
-
-TZ = ZoneInfo("Asia/Bangkok")
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from app.keyboards.main_menu import cancel_keyboard, main_menu_keyboard
+from app.keyboards.main_menu import cancel_keyboard
 from app.services.sheets import SheetsClient
 from app.states.workday import EndWork
+from app.utils.menu import menu_for_user
 
 router = Router()
+TZ = ZoneInfo("Asia/Bangkok")
+
+
+def round_hours_from_minutes(minutes: int) -> float:
+    hours = minutes / 60
+    return round(hours * 2) / 2
 
 
 @router.message(F.text == "🔴 Закончил работу")
 async def work_end_begin(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
-    row_index = sheets.get_open_shift_row_index(message.from_user.id)
-    if not row_index:
+    open_shift = sheets.get_open_shift(message.from_user.id)
+    if not open_shift:
         await message.answer(
-            "ℹ️ Нет открытой смены.\nСначала нажми «🟢 Начал работу».",
-            reply_markup=main_menu_keyboard(),
+            "⚠️ У вас нет открытой смены.",
+            reply_markup=menu_for_user(sheets, message.from_user.id),
         )
         return
 
-    await state.update_data(row_index=row_index)
     await state.set_state(EndWork.description)
     await message.answer(
-        "📝 Что сделал? Кратко опиши выполненную работу:",
+        "📝 Что было сделано за смену?",
         reply_markup=cancel_keyboard(),
     )
 
 
 @router.message(EndWork.description)
-async def work_end_description(message: Message, state: FSMContext) -> None:
+async def work_end_description(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
     if message.text == "❌ Отмена":
         await state.clear()
-        await message.answer("Отменено.", reply_markup=main_menu_keyboard())
+        await message.answer(
+            "Отменено.",
+            reply_markup=menu_for_user(sheets, message.from_user.id),
+        )
         return
 
     await state.update_data(description=message.text)
     await state.set_state(EndWork.comment)
     await message.answer(
-        "💬 Дополнительный комментарий (или «нет»):",
+        "💬 Комментарий к завершению (или напиши «нет»):",
         reply_markup=cancel_keyboard(),
     )
 
@@ -51,53 +58,72 @@ async def work_end_description(message: Message, state: FSMContext) -> None:
 async def work_end_comment(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
     if message.text == "❌ Отмена":
         await state.clear()
-        await message.answer("Отменено.", reply_markup=main_menu_keyboard())
+        await message.answer(
+            "Отменено.",
+            reply_markup=menu_for_user(sheets, message.from_user.id),
+        )
         return
 
     data = await state.get_data()
-    now = datetime.now(TZ)
-    end_time_str = now.isoformat(timespec="seconds")
-    comment = "" if message.text.lower() in ("нет", "no", "-") else message.text
+    row_index = sheets.get_open_shift_row_index(message.from_user.id)
 
-    # Получаем start_time из листа
-    sheet = sheets.work_log_sheet()
-    row_values = sheet.row_values(data["row_index"])
-    start_time_str = row_values[5] if len(row_values) > 5 else ""
-    duration_raw = 0
-    duration_rounded = 0.0
+    if not row_index:
+        await state.clear()
+        await message.answer(
+            "❌ Не удалось найти открытую смену.",
+            reply_markup=menu_for_user(sheets, message.from_user.id),
+        )
+        return
 
-    if start_time_str:
-        try:
-            start_dt = datetime.fromisoformat(start_time_str)
-            delta: timedelta = now - start_dt
-            duration_raw = int(delta.total_seconds() // 60)
-            # Округление до 0.5ч
-            hours_raw = delta.total_seconds() / 3600
-            duration_rounded = round(hours_raw * 2) / 2
-        except ValueError:
-            pass
+    open_shift = sheets.get_open_shift(message.from_user.id)
+    if not open_shift:
+        await state.clear()
+        await message.answer(
+            "❌ Не удалось прочитать открытую смену.",
+            reply_markup=menu_for_user(sheets, message.from_user.id),
+        )
+        return
+
+    end_dt = datetime.now(TZ)
+    start_time_raw = str(open_shift.get("start_time", "")).strip()
 
     try:
-        sheets.close_shift(
-            row_index=data["row_index"],
-            end_time=end_time_str,
-            description=data["description"],
-            comment=comment,
-            duration_raw=duration_raw,
-            duration_rounded=duration_rounded,
-        )
-        await state.clear()
-        hours_display = f"{duration_rounded:.1f} ч" if duration_rounded else "—"
-        await message.answer(
-            f"✅ Смена закрыта!\n\n"
-            f"📝 Что сделано: {data['description']}\n"
-            f"🕐 Конец: {end_time_str}\n"
-            f"⏱ Продолжительность: {hours_display}",
-            reply_markup=main_menu_keyboard(),
-        )
+        start_dt = datetime.fromisoformat(start_time_raw)
     except Exception:
         await state.clear()
         await message.answer(
-            "❌ Ошибка при закрытии смены. Сообщите администратору.",
-            reply_markup=main_menu_keyboard(),
+            f"❌ Некорректное время начала смены: {start_time_raw}",
+            reply_markup=menu_for_user(sheets, message.from_user.id),
+        )
+        return
+
+    duration_minutes = int((end_dt - start_dt).total_seconds() // 60)
+    if duration_minutes < 0:
+        duration_minutes = 0
+
+    rounded_hours = round_hours_from_minutes(duration_minutes)
+    comment = "" if message.text.lower() in ("нет", "no", "-") else message.text
+
+    try:
+        sheets.close_shift(
+            row_index=row_index,
+            end_time=end_dt.isoformat(timespec="seconds"),
+            description=data.get("description", ""),
+            comment=comment,
+            duration_raw=duration_minutes,
+            duration_rounded=rounded_hours,
+        )
+        await state.clear()
+        await message.answer(
+            f"✅ Смена закрыта.\n\n"
+            f"🕒 Отработано: {duration_minutes} мин.\n"
+            f"⏱ В табель: {rounded_hours} ч.\n"
+            f"📝 Сделано: {data.get('description', '')}",
+            reply_markup=menu_for_user(sheets, message.from_user.id),
+        )
+    except Exception as e:
+        await state.clear()
+        await message.answer(
+            f"❌ Ошибка при закрытии смены: {e}",
+            reply_markup=menu_for_user(sheets, message.from_user.id),
         )
