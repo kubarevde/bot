@@ -2,17 +2,20 @@ import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-TZ = ZoneInfo("Asia/Bangkok")
-
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-from app.keyboards.main_menu import cancel_keyboard, main_menu_keyboard
+from app.keyboards.main_menu import (
+    cancel_keyboard,
+    main_menu_keyboard,
+    location_keyboard,
+)
 from app.services.sheets import SheetsClient
 from app.states.workday import StartWork
 
 router = Router()
+TZ = ZoneInfo("Asia/Bangkok")
 
 WORK_TYPES = ["Поле", "Ремонт", "Закуп", "Дом", "Другое"]
 
@@ -37,10 +40,13 @@ async def work_start_begin(message: Message, state: FSMContext, sheets: SheetsCl
         )
         return
 
-    await state.update_data(employee=employee, start_time=datetime.now(TZ).isoformat(timespec="seconds"))
+    await state.update_data(
+        employee=employee,
+        start_time=datetime.now(TZ).isoformat(timespec="seconds"),
+    )
     await state.set_state(StartWork.location)
     await message.answer(
-        "📍 Где работаешь? Укажи объект или локацию:",
+        "📍 Где работаешь? Укажи объект или локацию вручную:",
         reply_markup=cancel_keyboard(),
     )
 
@@ -53,8 +59,42 @@ async def work_start_location(message: Message, state: FSMContext) -> None:
         return
 
     await state.update_data(location=message.text)
+    await state.set_state(StartWork.geo)
+    await message.answer(
+        "📌 Если хочешь, отправь геометку кнопкой ниже.\n"
+        "Если не нужно — нажми «⏭ Пропустить».",
+        reply_markup=location_keyboard(),
+    )
+
+
+@router.message(StartWork.geo, F.location)
+async def work_start_geo_location(message: Message, state: FSMContext) -> None:
+    await state.update_data(
+        latitude=message.location.latitude,
+        longitude=message.location.longitude,
+    )
     await state.set_state(StartWork.work_type)
     await message.answer("🔧 Выбери тип работы:", reply_markup=work_type_keyboard())
+
+
+@router.message(StartWork.geo, F.text == "⏭ Пропустить")
+async def work_start_geo_skip(message: Message, state: FSMContext) -> None:
+    await state.update_data(latitude="", longitude="")
+    await state.set_state(StartWork.work_type)
+    await message.answer("🔧 Выбери тип работы:", reply_markup=work_type_keyboard())
+
+
+@router.message(StartWork.geo, F.text == "❌ Отмена")
+async def work_start_geo_cancel(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("Отменено.", reply_markup=main_menu_keyboard())
+
+
+@router.message(StartWork.geo)
+async def work_start_geo_invalid(message: Message) -> None:
+    await message.answer(
+        "Пожалуйста, отправь геопозицию кнопкой ниже или нажми «⏭ Пропустить»."
+    )
 
 
 @router.message(StartWork.work_type)
@@ -115,20 +155,29 @@ async def work_start_comment(message: Message, state: FSMContext, sheets: Sheets
         "open",
         "",
         "",
+        data.get("latitude", ""),
+        data.get("longitude", ""),
     ]
 
     try:
         sheets.append_work_log_row(row)
         await state.clear()
+        geo_text = (
+            f"\n📌 Геометка: {data.get('latitude')}, {data.get('longitude')}"
+            if data.get("latitude") and data.get("longitude")
+            else "\n📌 Геометка: не указана"
+        )
         await message.answer(
             f"✅ Начало работы зафиксировано!\n\n"
             f"📍 Объект: {data.get('location')}\n"
             f"🔧 Тип: {data.get('work_type')}\n"
             f"🚜 Техника: {data.get('equipment')}\n"
-            f"🕐 Время: {data['start_time']}",
+            f"🕐 Время: {data['start_time']}"
+            f"{geo_text}",
             reply_markup=main_menu_keyboard(),
         )
-    except Exception as e:
+
+    except Exception:
         await state.clear()
         await message.answer(
             "❌ Ошибка при записи в журнал. Попробуйте ещё раз или сообщите администратору.",
