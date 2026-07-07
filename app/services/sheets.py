@@ -1,4 +1,5 @@
 import json
+
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -79,6 +80,16 @@ class SheetsClient:
                 and str(row.get("status", "")).strip().lower() == "open"
             ):
                 return i
+        return None
+
+    def get_open_shift(self, telegram_id: int) -> dict | None:
+        records = self._work_log_sheet.get_all_records()
+        for row in records:
+            if (
+                str(row.get("telegram_id", "")).strip() == str(telegram_id)
+                and str(row.get("status", "")).strip().lower() == "open"
+            ):
+                return row
         return None
 
     def close_shift(
