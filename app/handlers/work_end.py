@@ -1,4 +1,7 @@
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+TZ = ZoneInfo("Asia/Bangkok")
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -52,7 +55,7 @@ async def work_end_comment(message: Message, state: FSMContext, sheets: SheetsCl
         return
 
     data = await state.get_data()
-    now = datetime.now()
+    now = datetime.now(TZ)
     end_time_str = now.isoformat(timespec="seconds")
     comment = "" if message.text.lower() in ("нет", "no", "-") else message.text
 
