@@ -16,7 +16,9 @@ class EndWork(StatesGroup):
 
 class AdminAddShift(StatesGroup):
     employee_select = State()
+    start_date = State()
     start_time = State()
+    end_date = State()
     end_time = State()
     location = State()
     work_type = State()
@@ -27,6 +29,7 @@ class AdminAddShift(StatesGroup):
 
 class AdminCloseShift(StatesGroup):
     employee_select = State()
+    end_date = State()
     end_time = State()
     description = State()
     comment = State()
