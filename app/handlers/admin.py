@@ -1,33 +1,33 @@
-from aiogram import F, Router
-from aiogram.types import Message
+import uuid
+from datetime import datetime
 
-from app.keyboards.main_menu import admin_menu_keyboard
+from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+
+from app.keyboards.main_menu import admin_menu_keyboard, cancel_keyboard, main_menu_keyboard
 from app.services.sheets import SheetsClient
-from app.utils.datetime_fmt import human_dt
+from app.states.workday import AdminAddShift, AdminCloseShift
 
 router = Router()
 
+WORK_TYPES = ["Поле", "Ремонт", "Закуп", "Дом", "Другое"]
 
-def normalize_coord(value) -> str:
-    if value is None:
-        return ""
 
-    s = str(value).strip().replace(" ", "").replace(",", ".")
-    if not s:
-        return ""
+def work_type_keyboard() -> ReplyKeyboardMarkup:
+    rows = [[KeyboardButton(text=w)] for w in WORK_TYPES]
+    rows.append([KeyboardButton(text="❌ Отмена")])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
+
+def human_dt(value: str) -> str:
+    if not value:
+        return "—"
     try:
-        return f"{float(s):.6f}"
+        dt = datetime.fromisoformat(str(value).strip())
+        return dt.strftime("%d.%m.%Y %H:%M")
     except Exception:
-        return ""
-
-
-def google_maps_link(latitude, longitude) -> str:
-    lat = normalize_coord(latitude)
-    lon = normalize_coord(longitude)
-    if not lat or not lon:
-        return ""
-    return f"https://maps.google.com/?q={lat},{lon}"
+        return str(value)
 
 
 @router.message(F.text == "👥 Кто на смене")
@@ -51,27 +51,341 @@ async def who_is_working(message: Message, sheets: SheetsClient) -> None:
         work_type = row.get("work_type", "—")
         start_time = human_dt(row.get("start_time", ""))
 
-        latitude = row.get("latitude", "")
-        longitude = row.get("longitude", "")
-
-        map_link = google_maps_link(latitude, longitude)
-
-        if map_link:
-            geo_text = f'<a href="{map_link}">📍 Открыть карту</a>'
-        else:
-            geo_text = "📍 Геометка не указана или записана некорректно"
-
         lines.append(
             f"👤 <b>{employee_name}</b>\n"
             f"📍 Объект: {location}\n"
             f"🔧 Тип: {work_type}\n"
-            f"🕐 Начало: {start_time}\n"
-            f"{geo_text}"
+            f"🕐 Начало: {start_time}"
         )
 
     await message.answer(
         "👥 <b>Кто сейчас на смене:</b>\n\n" + "\n\n".join(lines),
         reply_markup=admin_menu_keyboard(),
         parse_mode="HTML",
-        disable_web_page_preview=True,
     )
+
+
+@router.message(F.text == "📝 Добавить смену за сотрудника")
+async def admin_add_shift_begin(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
+    if not sheets.is_admin(message.from_user.id):
+        await message.answer("⛔ Команда доступна только администратору.")
+        return
+
+    await state.clear()
+    await state.set_state(AdminAddShift.employee_code)
+    await message.answer(
+        "Введите employee_code сотрудника:",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.message(AdminAddShift.employee_code)
+async def admin_add_shift_employee(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    employee = sheets.get_employee_by_code(message.text.strip())
+    if not employee:
+        await message.answer("Сотрудник с таким employee_code не найден. Попробуйте ещё раз.")
+        return
+
+    if sheets.get_open_shift_by_employee_code(employee.get("employee_code", "")):
+        await message.answer("У этого сотрудника уже есть открытая смена.")
+        return
+
+    await state.update_data(employee=employee)
+    await state.set_state(AdminAddShift.start_time)
+    await message.answer(
+        "Введите время начала в формате YYYY-MM-DD HH:MM\n"
+        "Пример: 2026-07-08 08:30",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.message(AdminAddShift.start_time)
+async def admin_add_shift_start_time(message: Message, state: FSMContext) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    try:
+        start_dt = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
+    except ValueError:
+        await message.answer("Неверный формат. Используй YYYY-MM-DD HH:MM")
+        return
+
+    await state.update_data(start_time=start_dt.isoformat(timespec="seconds"))
+    await state.set_state(AdminAddShift.end_time)
+    await message.answer(
+        "Введите время окончания в формате YYYY-MM-DD HH:MM\n"
+        "Пример: 2026-07-08 17:00",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.message(AdminAddShift.end_time)
+async def admin_add_shift_end_time(message: Message, state: FSMContext) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    try:
+        end_dt = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
+    except ValueError:
+        await message.answer("Неверный формат. Используй YYYY-MM-DD HH:MM")
+        return
+
+    data = await state.get_data()
+    start_dt = datetime.fromisoformat(data["start_time"])
+
+    if end_dt <= start_dt:
+        await message.answer("Время окончания должно быть позже времени начала.")
+        return
+
+    await state.update_data(end_time=end_dt.isoformat(timespec="seconds"))
+    await state.set_state(AdminAddShift.location)
+    await message.answer("Укажи объект / место работы:", reply_markup=cancel_keyboard())
+
+
+@router.message(AdminAddShift.location)
+async def admin_add_shift_location(message: Message, state: FSMContext) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    await state.update_data(location=message.text.strip())
+    await state.set_state(AdminAddShift.work_type)
+    await message.answer("Выбери тип работы:", reply_markup=work_type_keyboard())
+
+
+@router.message(AdminAddShift.work_type)
+async def admin_add_shift_work_type(message: Message, state: FSMContext) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    await state.update_data(work_type=message.text.strip())
+    await state.set_state(AdminAddShift.equipment)
+    await message.answer("Укажи технику/направление (или «нет»):", reply_markup=cancel_keyboard())
+
+
+@router.message(AdminAddShift.equipment)
+async def admin_add_shift_equipment(message: Message, state: FSMContext) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    equipment = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
+    await state.update_data(equipment=equipment)
+    await state.set_state(AdminAddShift.description)
+    await message.answer("Что сделал? Краткое описание работы:", reply_markup=cancel_keyboard())
+
+
+@router.message(AdminAddShift.description)
+async def admin_add_shift_description(message: Message, state: FSMContext) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    await state.update_data(description=message.text.strip())
+    await state.set_state(AdminAddShift.comment)
+    await message.answer("Комментарий (или «нет»):", reply_markup=cancel_keyboard())
+
+
+@router.message(AdminAddShift.comment)
+async def admin_add_shift_comment(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    data = await state.get_data()
+    employee = data["employee"]
+
+    start_dt = datetime.fromisoformat(data["start_time"])
+    end_dt = datetime.fromisoformat(data["end_time"])
+    delta = end_dt - start_dt
+    duration_raw = int(delta.total_seconds() // 60)
+    duration_rounded = round((delta.total_seconds() / 3600) * 2) / 2
+
+    comment_text = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
+    admin_note = f"Добавлено админом @{message.from_user.username or message.from_user.id}"
+    final_comment = admin_note if not comment_text else f"{admin_note}. {comment_text}"
+
+    row = [
+        str(uuid.uuid4())[:8],
+        start_dt.date().isoformat(),
+        employee.get("employee_code", ""),
+        employee.get("employee_name", ""),
+        str(employee.get("telegram_id", "")),
+        data["start_time"],
+        data["end_time"],
+        data.get("work_type", ""),
+        data.get("location", ""),
+        data.get("equipment", ""),
+        data.get("description", ""),
+        final_comment,
+        "closed",
+        duration_raw,
+        duration_rounded,
+        "",
+        "",
+    ]
+
+    try:
+        sheets.append_work_log_row(row)
+        await state.clear()
+        await message.answer(
+            f"✅ Смена за сотрудника добавлена.\n\n"
+            f"👤 {employee.get('employee_name', '—')}\n"
+            f"📍 {data.get('location', '—')}\n"
+            f"🕐 {human_dt(data['start_time'])} → {human_dt(data['end_time'])}\n"
+            f"⏱ {duration_rounded:.1f} ч",
+            reply_markup=admin_menu_keyboard(),
+        )
+    except Exception:
+        await state.clear()
+        await message.answer(
+            "❌ Ошибка при записи смены.",
+            reply_markup=admin_menu_keyboard(),
+        )
+
+
+@router.message(F.text == "✅ Закрыть смену за сотрудника")
+async def admin_close_shift_begin(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
+    if not sheets.is_admin(message.from_user.id):
+        await message.answer("⛔ Команда доступна только администратору.")
+        return
+
+    await state.clear()
+    await state.set_state(AdminCloseShift.employee_code)
+    await message.answer(
+        "Введите employee_code сотрудника, чью открытую смену нужно закрыть:",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.message(AdminCloseShift.employee_code)
+async def admin_close_shift_employee(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    employee = sheets.get_employee_by_code(message.text.strip())
+    if not employee:
+        await message.answer("Сотрудник с таким employee_code не найден.")
+        return
+
+    row_index = sheets.get_open_shift_row_index_by_employee_code(employee.get("employee_code", ""))
+    if not row_index:
+        await message.answer("У сотрудника нет открытой смены.")
+        return
+
+    await state.update_data(employee=employee, row_index=row_index)
+    await state.set_state(AdminCloseShift.end_time)
+    await message.answer(
+        "Введите время окончания в формате YYYY-MM-DD HH:MM",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.message(AdminCloseShift.end_time)
+async def admin_close_shift_end_time(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    try:
+        end_dt = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
+    except ValueError:
+        await message.answer("Неверный формат. Используй YYYY-MM-DD HH:MM")
+        return
+
+    data = await state.get_data()
+    row_values = sheets.work_log_sheet().row_values(data["row_index"])
+    start_time_str = row_values[5] if len(row_values) > 5 else ""
+
+    try:
+        start_dt = datetime.fromisoformat(start_time_str)
+    except ValueError:
+        await message.answer("Не удалось прочитать время начала смены.")
+        return
+
+    if end_dt <= start_dt:
+        await message.answer("Время окончания должно быть позже времени начала.")
+        return
+
+    await state.update_data(end_time=end_dt.isoformat(timespec="seconds"))
+    await state.set_state(AdminCloseShift.description)
+    await message.answer("Что сделал? Краткое описание работы:", reply_markup=cancel_keyboard())
+
+
+@router.message(AdminCloseShift.description)
+async def admin_close_shift_description(message: Message, state: FSMContext) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    await state.update_data(description=message.text.strip())
+    await state.set_state(AdminCloseShift.comment)
+    await message.answer("Комментарий (или «нет»):", reply_markup=cancel_keyboard())
+
+
+@router.message(AdminCloseShift.comment)
+async def admin_close_shift_comment(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    data = await state.get_data()
+    row_values = sheets.work_log_sheet().row_values(data["row_index"])
+    start_time_str = row_values[5] if len(row_values) > 5 else ""
+
+    try:
+        start_dt = datetime.fromisoformat(start_time_str)
+        end_dt = datetime.fromisoformat(data["end_time"])
+        delta = end_dt - start_dt
+        duration_raw = int(delta.total_seconds() // 60)
+        duration_rounded = round((delta.total_seconds() / 3600) * 2) / 2
+    except ValueError:
+        duration_raw = 0
+        duration_rounded = 0.0
+
+    comment_text = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
+    admin_note = f"Закрыто админом @{message.from_user.username or message.from_user.id}"
+    final_comment = admin_note if not comment_text else f"{admin_note}. {comment_text}"
+
+    try:
+        sheets.close_shift(
+            row_index=data["row_index"],
+            end_time=data["end_time"],
+            description=data["description"],
+            comment=final_comment,
+            duration_raw=duration_raw,
+            duration_rounded=duration_rounded,
+        )
+        await state.clear()
+        await message.answer(
+            f"✅ Смена сотрудника закрыта.\n\n"
+            f"🕐 Конец: {human_dt(data['end_time'])}\n"
+            f"⏱ Продолжительность: {duration_rounded:.1f} ч",
+            reply_markup=admin_menu_keyboard(),
+        )
+    except Exception:
+        await state.clear()
+        await message.answer(
+            "❌ Ошибка при закрытии смены.",
+            reply_markup=admin_menu_keyboard(),
+        )
