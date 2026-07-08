@@ -35,14 +35,8 @@ class SheetsClient:
     def work_log_sheet(self):
         return self._spreadsheet.worksheet("work_log")
 
-    def append_row(self, row: list) -> None:
-        self.work_log_sheet().append_row(row)
-
     def append_work_log_row(self, row: list) -> None:
-        self.work_log_sheet().append_row(row)
-
-    def get_all_records(self) -> list[dict]:
-        return self.work_log_sheet().get_all_records()
+        self.work_log_sheet().append_row(row, value_input_option="RAW")
 
     def get_employee_by_telegram(self, telegram_id: int):
         rows = self.employees_sheet().get_all_records()
@@ -65,8 +59,7 @@ class SheetsClient:
         employee = self.get_employee_by_telegram(telegram_id)
         if not employee:
             return False
-        role = str(employee.get("role", "")).strip().lower()
-        return role == "admin"
+        return str(employee.get("role", "")).strip().lower() == "admin"
 
     def has_open_shift(self, telegram_id: int) -> bool:
         rows = self.work_log_sheet().get_all_records()
@@ -88,6 +81,20 @@ class SheetsClient:
                 return row
         return None
 
+    def get_open_shift_by_employee_code(self, employee_code: str):
+        rows = self.work_log_sheet().get_all_records()
+        for row in rows:
+            if (
+                str(row.get("employee_code", "")).strip() == str(employee_code).strip()
+                and str(row.get("status", "")).strip().lower() == "open"
+            ):
+                return row
+        return None
+
+    def get_active_shifts(self) -> list[dict]:
+        rows = self.work_log_sheet().get_all_records()
+        return [row for row in rows if str(row.get("status", "")).strip().lower() == "open"]
+
     def get_open_shift_row_index(self, telegram_id: int):
         values = self.work_log_sheet().get_all_values()
         if not values:
@@ -105,37 +112,6 @@ class SheetsClient:
             st = row[status_idx] if len(row) > status_idx else ""
             if str(tg).strip() == str(telegram_id) and str(st).strip().lower() == "open":
                 return i
-        return None
-
-    def get_active_shifts(self) -> list[dict]:
-        rows = self.work_log_sheet().get_all_records()
-        return [r for r in rows if str(r.get("status", "")).strip().lower() == "open"]
-
-    def close_shift(
-        self,
-        row_index: int,
-        end_time: str,
-        description: str,
-        comment: str,
-        duration_raw: int,
-        duration_rounded: float,
-    ) -> None:
-        sheet = self.work_log_sheet()
-        sheet.update_cell(row_index, 7, end_time)
-        sheet.update_cell(row_index, 11, description)
-        sheet.update_cell(row_index, 12, comment)
-        sheet.update_cell(row_index, 13, "closed")
-        sheet.update_cell(row_index, 14, duration_raw)
-        sheet.update_cell(row_index, 15, duration_rounded)
-
-    def get_open_shift_by_employee_code(self, employee_code: str):
-        rows = self.work_log_sheet().get_all_records()
-        for row in rows:
-            if (
-                str(row.get("employee_code", "")).strip() == str(employee_code).strip()
-                and str(row.get("status", "")).strip().lower() == "open"
-            ):
-                return row
         return None
 
     def get_open_shift_row_index_by_employee_code(self, employee_code: str):
@@ -159,3 +135,20 @@ class SheetsClient:
             ):
                 return i
         return None
+
+    def close_shift(
+        self,
+        row_index: int,
+        end_time: str,
+        description: str,
+        comment: str,
+        duration_raw: int,
+        duration_rounded: float,
+    ) -> None:
+        sheet = self.work_log_sheet()
+        sheet.update_cell(row_index, 7, end_time)
+        sheet.update_cell(row_index, 11, description)
+        sheet.update_cell(row_index, 12, comment)
+        sheet.update_cell(row_index, 13, "closed")
+        sheet.update_cell(row_index, 14, duration_raw)
+        sheet.update_cell(row_index, 15, duration_rounded)
