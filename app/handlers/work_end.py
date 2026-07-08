@@ -14,6 +14,18 @@ router = Router()
 TZ = ZoneInfo("Asia/Bangkok")
 
 
+def format_dt(dt: datetime) -> str:
+    return dt.strftime("%d.%m.%Y ") + str(dt.hour) + dt.strftime(":%M:%S")
+
+
+def parse_dt(value: str) -> datetime:
+    value = value.strip()
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return datetime.strptime(value, "%d.%m.%Y %H:%M:%S")
+
+
 def round_hours_from_minutes(minutes: int) -> float:
     hours = minutes / 60
     return round(hours * 2) / 2
@@ -85,11 +97,11 @@ async def work_end_comment(message: Message, state: FSMContext, sheets: SheetsCl
         return
 
     end_dt = datetime.now(TZ)
-    end_time_str = end_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    end_time_str = format_dt(end_dt)
     start_time_raw = str(open_shift.get("start_time", "")).strip()
 
     try:
-        start_dt = datetime.fromisoformat(start_time_raw)
+        start_dt = parse_dt(start_time_raw)
     except Exception:
         await state.clear()
         await message.answer(
