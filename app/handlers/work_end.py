@@ -19,7 +19,7 @@ def format_dt(dt: datetime) -> str:
 
 
 def parse_dt(value: str) -> datetime:
-    value = value.strip()
+    value = str(value).strip()
     try:
         return datetime.fromisoformat(value)
     except ValueError:
@@ -58,7 +58,7 @@ async def work_end_description(message: Message, state: FSMContext, sheets: Shee
         )
         return
 
-    await state.update_data(description=message.text)
+    await state.update_data(description=message.text.strip())
     await state.set_state(EndWork.comment)
     await message.answer(
         "💬 Комментарий к завершению (или напиши «нет»):",
@@ -96,7 +96,7 @@ async def work_end_comment(message: Message, state: FSMContext, sheets: SheetsCl
         )
         return
 
-    end_dt = datetime.now(TZ)
+    end_dt = datetime.now(TZ).replace(tzinfo=None)
     end_time_str = format_dt(end_dt)
     start_time_raw = str(open_shift.get("start_time", "")).strip()
 
@@ -110,7 +110,7 @@ async def work_end_comment(message: Message, state: FSMContext, sheets: SheetsCl
         )
         return
 
-    duration_minutes = int((end_dt.replace(tzinfo=None) - start_dt).total_seconds() // 60)
+    duration_minutes = int((end_dt - start_dt).total_seconds() // 60)
     if duration_minutes < 0:
         duration_minutes = 0
 
