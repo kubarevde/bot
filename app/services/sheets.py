@@ -1,5 +1,4 @@
 import json
-
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -15,15 +14,10 @@ class SheetsClient:
     def __init__(self, client: gspread.Client):
         self._client = client
         self._spreadsheet = client.open(settings.google_sheets_name)
-        self._employees_sheet = self._spreadsheet.sheet1
-        try:
-            self._work_log_sheet = self._spreadsheet.worksheet("work_log")
-        except Exception:
-            self._work_log_sheet = self._spreadsheet.get_worksheet(1)
 
     @classmethod
     def from_service_account(cls) -> "SheetsClient":
-        if settings.google_creds_json and settings.google_creds_json.strip():
+        if settings.google_creds_json:
             creds_dict = json.loads(settings.google_creds_json)
             creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         else:
@@ -36,61 +30,76 @@ class SheetsClient:
         return cls(client)
 
     def employees_sheet(self):
-        return self._employees_sheet
+        return self._spreadsheet.worksheet("employees")
 
     def work_log_sheet(self):
-        return self._work_log_sheet
-
-    def get_all_records(self) -> list[dict]:
-        return self._employees_sheet.get_all_records()
+        return self._spreadsheet.worksheet("work_log")
 
     def append_row(self, row: list) -> None:
-        self._employees_sheet.append_row(row)
+        self.work_log_sheet().append_row(row)
 
     def append_work_log_row(self, row: list) -> None:
-        self._work_log_sheet.append_row(row)
+        self.work_log_sheet().append_row(row)
 
-    def get_employee_by_telegram(self, telegram_id: int) -> dict | None:
-        records = self._employees_sheet.get_all_records()
-        for row in records:
+    def get_all_records(self) -> list[dict]:
+        return self.work_log_sheet().get_all_records()
+
+    def get_employee_by_telegram(self, telegram_id: int):
+        rows = self.employees_sheet().get_all_records()
+        for row in rows:
             if str(row.get("telegram_id", "")).strip() == str(telegram_id):
                 return row
         return None
 
+    def get_employee_by_code(self, employee_code: str):
+        rows = self.employees_sheet().get_all_records()
+        for row in rows:
+            if str(row.get("employee_code", "")).strip() == str(employee_code).strip():
+                return row
+        return None
+
+    def get_all_employees(self) -> list[dict]:
+        return self.employees_sheet().get_all_records()
+
     def is_admin(self, telegram_id: int) -> bool:
         employee = self.get_employee_by_telegram(telegram_id)
-        return bool(employee and str(employee.get("role", "")).strip().lower() == "admin")
-
-    def get_active_shifts(self) -> list[dict]:
-        records = self._work_log_sheet.get_all_records()
-        return [
-            row
-            for row in records
-            if str(row.get("status", "")).strip().lower() == "open"
-        ]
+        if not employee:
+            return False
+        role = str(employee.get("role", "")).strip().lower()
+        return role == "admin"
 
     def has_open_shift(self, telegram_id: int) -> bool:
-        return self.get_open_shift_row_index(telegram_id) is not None
-
-    def get_open_shift_row_index(self, telegram_id: int) -> int | None:
-        records = self._work_log_sheet.get_all_records()
-        for i, row in enumerate(records, start=2):
+        rows = self.work_log_sheet().get_all_records()
+        for row in rows:
             if (
                 str(row.get("telegram_id", "")).strip() == str(telegram_id)
                 and str(row.get("status", "")).strip().lower() == "open"
             ):
+                return True
+        return False
+
+    def get_open_shift_row_index(self, telegram_id: int):
+        values = self.work_log_sheet().get_all_values()
+        if not values:
+            return None
+
+        headers = values[0]
+        try:
+            telegram_id_idx = headers.index("telegram_id")
+            status_idx = headers.index("status")
+        except ValueError:
+            return None
+
+        for i, row in enumerate(values[1:], start=2):
+            tg = row[telegram_id_idx] if len(row) > telegram_id_idx else ""
+            st = row[status_idx] if len(row) > status_idx else ""
+            if str(tg).strip() == str(telegram_id) and str(st).strip().lower() == "open":
                 return i
         return None
 
-    def get_open_shift(self, telegram_id: int) -> dict | None:
-        records = self._work_log_sheet.get_all_records()
-        for row in records:
-            if (
-                str(row.get("telegram_id", "")).strip() == str(telegram_id)
-                and str(row.get("status", "")).strip().lower() == "open"
-            ):
-                return row
-        return None
+    def get_active_shifts(self) -> list[dict]:
+        rows = self.work_log_sheet().get_all_records()
+        return [r for r in rows if str(r.get("status", "")).strip().lower() == "open"]
 
     def close_shift(
         self,
@@ -101,19 +110,42 @@ class SheetsClient:
         duration_raw: int,
         duration_rounded: float,
     ) -> None:
-        row_values = self._work_log_sheet.row_values(row_index)
+        sheet = self.work_log_sheet()
+        sheet.update_cell(row_index, 7, end_time)
+        sheet.update_cell(row_index, 11, description)
+        sheet.update_cell(row_index, 12, comment)
+        sheet.update_cell(row_index, 13, "closed")
+        sheet.update_cell(row_index, 14, duration_raw)
+        sheet.update_cell(row_index, 15, duration_rounded)
 
-        while len(row_values) < 17:
-            row_values.append("")
+    def get_open_shift_by_employee_code(self, employee_code: str):
+        rows = self.work_log_sheet().get_all_records()
+        for row in rows:
+            if (
+                str(row.get("employee_code", "")).strip() == str(employee_code).strip()
+                and str(row.get("status", "")).strip().lower() == "open"
+            ):
+                return row
+        return None
 
-        row_values[6] = end_time
-        row_values[10] = description
-        row_values[11] = comment
-        row_values[12] = "closed"
-        row_values[13] = str(duration_raw)
-        row_values[14] = str(duration_rounded)
+    def get_open_shift_row_index_by_employee_code(self, employee_code: str):
+        values = self.work_log_sheet().get_all_values()
+        if not values:
+            return None
 
-        self._work_log_sheet.update(
-            f"A{row_index}:Q{row_index}",
-            [row_values[:17]],
-        )
+        headers = values[0]
+        try:
+            employee_code_idx = headers.index("employee_code")
+            status_idx = headers.index("status")
+        except ValueError:
+            return None
+
+        for i, row in enumerate(values[1:], start=2):
+            code = row[employee_code_idx] if len(row) > employee_code_idx else ""
+            st = row[status_idx] if len(row) > status_idx else ""
+            if (
+                str(code).strip() == str(employee_code).strip()
+                and str(st).strip().lower() == "open"
+            ):
+                return i
+        return None
