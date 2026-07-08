@@ -21,8 +21,8 @@ def round_hours_from_minutes(minutes: int) -> float:
 
 @router.message(F.text == "🔴 Закончил работу")
 async def work_end_begin(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
-    open_shift = sheets.get_open_shift(message.from_user.id)
-    if not open_shift:
+    row_index = sheets.get_open_shift_row_index(message.from_user.id)
+    if not row_index:
         await message.answer(
             "⚠️ У вас нет открытой смены.",
             reply_markup=menu_for_user(sheets, message.from_user.id),
@@ -103,7 +103,7 @@ async def work_end_comment(message: Message, state: FSMContext, sheets: SheetsCl
         duration_minutes = 0
 
     rounded_hours = round_hours_from_minutes(duration_minutes)
-    comment = "" if message.text.lower() in ("нет", "no", "-") else message.text
+    comment = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
 
     try:
         sheets.close_shift(
