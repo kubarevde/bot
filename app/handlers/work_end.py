@@ -85,6 +85,7 @@ async def work_end_comment(message: Message, state: FSMContext, sheets: SheetsCl
         return
 
     end_dt = datetime.now(TZ)
+    end_time_str = end_dt.strftime("%Y-%m-%dT%H:%M:%S")
     start_time_raw = str(open_shift.get("start_time", "")).strip()
 
     try:
@@ -97,7 +98,7 @@ async def work_end_comment(message: Message, state: FSMContext, sheets: SheetsCl
         )
         return
 
-    duration_minutes = int((end_dt - start_dt).total_seconds() // 60)
+    duration_minutes = int((end_dt.replace(tzinfo=None) - start_dt).total_seconds() // 60)
     if duration_minutes < 0:
         duration_minutes = 0
 
@@ -107,7 +108,7 @@ async def work_end_comment(message: Message, state: FSMContext, sheets: SheetsCl
     try:
         sheets.close_shift(
             row_index=row_index,
-            end_time=end_dt.isoformat(timespec="seconds"),
+            end_time=end_time_str,
             description=data.get("description", ""),
             comment=comment,
             duration_raw=duration_minutes,
