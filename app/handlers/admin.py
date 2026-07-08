@@ -5,7 +5,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-from app.keyboards.main_menu import admin_menu_keyboard, cancel_keyboard, main_menu_keyboard
+from app.keyboards.main_menu import admin_menu_keyboard, cancel_keyboard
 from app.services.sheets import SheetsClient
 from app.states.workday import AdminAddShift, AdminCloseShift
 
@@ -20,6 +20,18 @@ def work_type_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
+def employee_keyboard(employees: list[dict]) -> ReplyKeyboardMarkup:
+    rows = []
+    for emp in employees:
+        code = str(emp.get("employee_code", "")).strip()
+        name = str(emp.get("employee_name", "")).strip()
+        if code and name:
+            rows.append([KeyboardButton(text=f"{name} [{code}]")])
+
+    rows.append([KeyboardButton(text="❌ Отмена")])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
 def human_dt(value: str) -> str:
     if not value:
         return "—"
@@ -28,6 +40,13 @@ def human_dt(value: str) -> str:
         return dt.strftime("%d.%m.%Y %H:%M")
     except Exception:
         return str(value)
+
+
+def parse_employee_code_from_button(text: str) -> str:
+    text = str(text).strip()
+    if "[" in text and text.endswith("]"):
+        return text.split("[")[-1].rstrip("]").strip()
+    return ""
 
 
 @router.message(F.text == "👥 Кто на смене")
@@ -71,24 +90,34 @@ async def admin_add_shift_begin(message: Message, state: FSMContext, sheets: She
         await message.answer("⛔ Команда доступна только администратору.")
         return
 
+    employees = sheets.get_all_employees()
+    if not employees:
+        await message.answer("Список сотрудников пуст.", reply_markup=admin_menu_keyboard())
+        return
+
     await state.clear()
-    await state.set_state(AdminAddShift.employee_code)
+    await state.set_state(AdminAddShift.employee_select)
     await message.answer(
-        "Введите employee_code сотрудника:",
-        reply_markup=cancel_keyboard(),
+        "Выбери сотрудника:",
+        reply_markup=employee_keyboard(employees),
     )
 
 
-@router.message(AdminAddShift.employee_code)
+@router.message(AdminAddShift.employee_select)
 async def admin_add_shift_employee(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
         return
 
-    employee = sheets.get_employee_by_code(message.text.strip())
+    employee_code = parse_employee_code_from_button(message.text)
+    if not employee_code:
+        await message.answer("Выбери сотрудника кнопкой из списка.")
+        return
+
+    employee = sheets.get_employee_by_code(employee_code)
     if not employee:
-        await message.answer("Сотрудник с таким employee_code не найден. Попробуйте ещё раз.")
+        await message.answer("Сотрудник не найден. Выбери сотрудника кнопкой из списка.")
         return
 
     if sheets.get_open_shift_by_employee_code(employee.get("employee_code", "")):
@@ -265,24 +294,34 @@ async def admin_close_shift_begin(message: Message, state: FSMContext, sheets: S
         await message.answer("⛔ Команда доступна только администратору.")
         return
 
+    employees = sheets.get_all_employees()
+    if not employees:
+        await message.answer("Список сотрудников пуст.", reply_markup=admin_menu_keyboard())
+        return
+
     await state.clear()
-    await state.set_state(AdminCloseShift.employee_code)
+    await state.set_state(AdminCloseShift.employee_select)
     await message.answer(
-        "Введите employee_code сотрудника, чью открытую смену нужно закрыть:",
-        reply_markup=cancel_keyboard(),
+        "Выбери сотрудника, чью открытую смену нужно закрыть:",
+        reply_markup=employee_keyboard(employees),
     )
 
 
-@router.message(AdminCloseShift.employee_code)
+@router.message(AdminCloseShift.employee_select)
 async def admin_close_shift_employee(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
         return
 
-    employee = sheets.get_employee_by_code(message.text.strip())
+    employee_code = parse_employee_code_from_button(message.text)
+    if not employee_code:
+        await message.answer("Выбери сотрудника кнопкой из списка.")
+        return
+
+    employee = sheets.get_employee_by_code(employee_code)
     if not employee:
-        await message.answer("Сотрудник с таким employee_code не найден.")
+        await message.answer("Сотрудник не найден.")
         return
 
     row_index = sheets.get_open_shift_row_index_by_employee_code(employee.get("employee_code", ""))
@@ -379,6 +418,7 @@ async def admin_close_shift_comment(message: Message, state: FSMContext, sheets:
         await state.clear()
         await message.answer(
             f"✅ Смена сотрудника закрыта.\n\n"
+            f"👤 {data['employee'].get('employee_name', '—')}\n"
             f"🕐 Конец: {human_dt(data['end_time'])}\n"
             f"⏱ Продолжительность: {duration_rounded:.1f} ч",
             reply_markup=admin_menu_keyboard(),
