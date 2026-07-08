@@ -16,6 +16,10 @@ TZ = ZoneInfo("Asia/Bangkok")
 WORK_TYPES = ["Поле", "Ремонт", "Закуп", "Дом", "Другое"]
 
 
+def format_dt(dt: datetime) -> str:
+    return dt.strftime("%d.%m.%Y ") + str(dt.hour) + dt.strftime(":%M:%S")
+
+
 def work_type_keyboard() -> ReplyKeyboardMarkup:
     rows = [[KeyboardButton(text=w)] for w in WORK_TYPES]
     rows.append([KeyboardButton(text="❌ Отмена")])
@@ -50,7 +54,7 @@ async def work_start_begin(message: Message, state: FSMContext, sheets: SheetsCl
         return
 
     start_dt = datetime.now(TZ)
-    start_time_str = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    start_time_str = format_dt(start_dt)
 
     await state.update_data(
         employee=employee,
