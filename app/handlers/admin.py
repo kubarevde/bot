@@ -14,6 +14,18 @@ router = Router()
 WORK_TYPES = ["Поле", "Ремонт", "Закуп", "Дом", "Другое"]
 
 
+def format_dt(dt: datetime) -> str:
+    return dt.strftime("%d.%m.%Y ") + str(dt.hour) + dt.strftime(":%M:%S")
+
+
+def parse_dt(value: str) -> datetime:
+    value = str(value).strip()
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return datetime.strptime(value, "%d.%m.%Y %H:%M:%S")
+
+
 def work_type_keyboard() -> ReplyKeyboardMarkup:
     rows = [[KeyboardButton(text=w)] for w in WORK_TYPES]
     rows.append([KeyboardButton(text="❌ Отмена")])
@@ -36,8 +48,8 @@ def human_dt(value: str) -> str:
     if not value:
         return "—"
     try:
-        dt = datetime.fromisoformat(str(value).strip())
-        return dt.strftime("%d.%m.%Y %H:%M")
+        dt = parse_dt(str(value).strip())
+        return format_dt(dt)
     except Exception:
         return str(value)
 
@@ -146,7 +158,7 @@ async def admin_add_shift_start_time(message: Message, state: FSMContext) -> Non
         await message.answer("Неверный формат. Используй YYYY-MM-DD HH:MM")
         return
 
-    await state.update_data(start_time=start_dt.isoformat(timespec="seconds"))
+    await state.update_data(start_time=format_dt(start_dt))
     await state.set_state(AdminAddShift.end_time)
     await message.answer(
         "Введите время окончания в формате YYYY-MM-DD HH:MM\n"
@@ -169,13 +181,13 @@ async def admin_add_shift_end_time(message: Message, state: FSMContext) -> None:
         return
 
     data = await state.get_data()
-    start_dt = datetime.fromisoformat(data["start_time"])
+    start_dt = parse_dt(data["start_time"])
 
     if end_dt <= start_dt:
         await message.answer("Время окончания должно быть позже времени начала.")
         return
 
-    await state.update_data(end_time=end_dt.isoformat(timespec="seconds"))
+    await state.update_data(end_time=format_dt(end_dt))
     await state.set_state(AdminAddShift.location)
     await message.answer("Укажи объект / место работы:", reply_markup=cancel_keyboard())
 
@@ -239,8 +251,8 @@ async def admin_add_shift_comment(message: Message, state: FSMContext, sheets: S
     data = await state.get_data()
     employee = data["employee"]
 
-    start_dt = datetime.fromisoformat(data["start_time"])
-    end_dt = datetime.fromisoformat(data["end_time"])
+    start_dt = parse_dt(data["start_time"])
+    end_dt = parse_dt(data["end_time"])
     delta = end_dt - start_dt
     duration_raw = int(delta.total_seconds() // 60)
     duration_rounded = round((delta.total_seconds() / 3600) * 2) / 2
@@ -355,7 +367,7 @@ async def admin_close_shift_end_time(message: Message, state: FSMContext, sheets
     start_time_str = row_values[5] if len(row_values) > 5 else ""
 
     try:
-        start_dt = datetime.fromisoformat(start_time_str)
+        start_dt = parse_dt(start_time_str)
     except ValueError:
         await message.answer("Не удалось прочитать время начала смены.")
         return
@@ -364,7 +376,7 @@ async def admin_close_shift_end_time(message: Message, state: FSMContext, sheets
         await message.answer("Время окончания должно быть позже времени начала.")
         return
 
-    await state.update_data(end_time=end_dt.isoformat(timespec="seconds"))
+    await state.update_data(end_time=format_dt(end_dt))
     await state.set_state(AdminCloseShift.description)
     await message.answer("Что сделал? Краткое описание работы:", reply_markup=cancel_keyboard())
 
@@ -393,8 +405,8 @@ async def admin_close_shift_comment(message: Message, state: FSMContext, sheets:
     start_time_str = row_values[5] if len(row_values) > 5 else ""
 
     try:
-        start_dt = datetime.fromisoformat(start_time_str)
-        end_dt = datetime.fromisoformat(data["end_time"])
+        start_dt = parse_dt(start_time_str)
+        end_dt = parse_dt(data["end_time"])
         delta = end_dt - start_dt
         duration_raw = int(delta.total_seconds() // 60)
         duration_rounded = round((delta.total_seconds() / 3600) * 2) / 2
