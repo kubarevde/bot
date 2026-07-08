@@ -78,6 +78,16 @@ class SheetsClient:
                 return True
         return False
 
+    def get_open_shift(self, telegram_id: int):
+        rows = self.work_log_sheet().get_all_records()
+        for row in rows:
+            if (
+                str(row.get("telegram_id", "")).strip() == str(telegram_id)
+                and str(row.get("status", "")).strip().lower() == "open"
+            ):
+                return row
+        return None
+
     def get_open_shift_row_index(self, telegram_id: int):
         values = self.work_log_sheet().get_all_values()
         if not values:
