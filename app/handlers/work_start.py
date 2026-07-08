@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -10,6 +11,7 @@ from app.services.sheets import SheetsClient
 from app.states.workday import StartWork
 
 router = Router()
+TZ = ZoneInfo("Asia/Bangkok")
 
 WORK_TYPES = ["Поле", "Ремонт", "Закуп", "Дом", "Другое"]
 
@@ -46,11 +48,13 @@ async def work_start_begin(message: Message, state: FSMContext, sheets: SheetsCl
             reply_markup=main_menu_keyboard(),
         )
         return
-        
-    now = datetime.now().replace(tzinfo=None, microsecond=0)
+
+    start_dt = datetime.now(TZ)
+    start_time_str = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
     await state.update_data(
         employee=employee,
-        start_time=now.isoformat(timespec="seconds")
+        start_time=start_time_str,
     )
     await state.set_state(StartWork.location)
     await message.answer(
@@ -144,7 +148,7 @@ async def work_start_comment(message: Message, state: FSMContext, sheets: Sheets
 
     data = await state.get_data()
     employee = data["employee"]
-    now = datetime.now()
+    now = datetime.now(TZ)
     comment = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
 
     row = [
@@ -182,9 +186,9 @@ async def work_start_comment(message: Message, state: FSMContext, sheets: Sheets
             f"🕐 Время: {data['start_time']}",
             reply_markup=main_menu_keyboard(),
         )
-    except Exception:
+    except Exception as e:
         await state.clear()
         await message.answer(
-            "❌ Ошибка при записи в журнал. Попробуйте ещё раз или сообщите администратору.",
+            f"❌ Ошибка при записи в журнал: {e}",
             reply_markup=main_menu_keyboard(),
         )
