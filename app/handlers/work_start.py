@@ -46,10 +46,11 @@ async def work_start_begin(message: Message, state: FSMContext, sheets: SheetsCl
             reply_markup=main_menu_keyboard(),
         )
         return
-
+        
+    now = datetime.now().replace(tzinfo=None, microsecond=0)
     await state.update_data(
         employee=employee,
-        start_time=datetime.now().isoformat(timespec="seconds"),
+        start_time=now.isoformat(timespec="seconds")
     )
     await state.set_state(StartWork.location)
     await message.answer(
