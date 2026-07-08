@@ -6,9 +6,10 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-from app.keyboards.main_menu import cancel_keyboard, main_menu_keyboard
+from app.keyboards.main_menu import cancel_keyboard
 from app.services.sheets import SheetsClient
 from app.states.workday import StartWork
+from app.utils.menu import menu_for_user
 
 router = Router()
 TZ = ZoneInfo("Asia/Bangkok")
@@ -49,11 +50,11 @@ async def work_start_begin(message: Message, state: FSMContext, sheets: SheetsCl
         await message.answer(
             "⚠️ У вас уже есть открытая смена.\n"
             "Сначала завершите её, нажав «🔴 Закончил работу».",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=menu_for_user(sheets, message.from_user.id),
         )
         return
 
-    start_dt = datetime.now(TZ)
+    start_dt = datetime.now(TZ).replace(tzinfo=None)
     start_time_str = format_dt(start_dt)
 
     await state.update_data(
@@ -68,10 +69,10 @@ async def work_start_begin(message: Message, state: FSMContext, sheets: SheetsCl
 
 
 @router.message(StartWork.location)
-async def work_start_location(message: Message, state: FSMContext) -> None:
+async def work_start_location(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
     if message.text == "❌ Отмена":
         await state.clear()
-        await message.answer("Отменено.", reply_markup=main_menu_keyboard())
+        await message.answer("Отменено.", reply_markup=menu_for_user(sheets, message.from_user.id))
         return
 
     await state.update_data(location=message.text.strip())
@@ -113,10 +114,10 @@ async def work_start_geo_invalid(message: Message) -> None:
 
 
 @router.message(StartWork.work_type)
-async def work_start_type(message: Message, state: FSMContext) -> None:
+async def work_start_type(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
     if message.text == "❌ Отмена":
         await state.clear()
-        await message.answer("Отменено.", reply_markup=main_menu_keyboard())
+        await message.answer("Отменено.", reply_markup=menu_for_user(sheets, message.from_user.id))
         return
 
     await state.update_data(work_type=message.text.strip())
@@ -128,10 +129,10 @@ async def work_start_type(message: Message, state: FSMContext) -> None:
 
 
 @router.message(StartWork.equipment)
-async def work_start_equipment(message: Message, state: FSMContext) -> None:
+async def work_start_equipment(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
     if message.text == "❌ Отмена":
         await state.clear()
-        await message.answer("Отменено.", reply_markup=main_menu_keyboard())
+        await message.answer("Отменено.", reply_markup=menu_for_user(sheets, message.from_user.id))
         return
 
     equipment = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
@@ -147,12 +148,12 @@ async def work_start_equipment(message: Message, state: FSMContext) -> None:
 async def work_start_comment(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
     if message.text == "❌ Отмена":
         await state.clear()
-        await message.answer("Отменено.", reply_markup=main_menu_keyboard())
+        await message.answer("Отменено.", reply_markup=menu_for_user(sheets, message.from_user.id))
         return
 
     data = await state.get_data()
     employee = data["employee"]
-    now = datetime.now(TZ)
+    now = datetime.now(TZ).replace(tzinfo=None)
     comment = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
 
     row = [
@@ -188,11 +189,11 @@ async def work_start_comment(message: Message, state: FSMContext, sheets: Sheets
             f"🚜 Техника: {data.get('equipment') or '—'}\n"
             f"📌 Геометка: {geo_info}\n"
             f"🕐 Время: {data['start_time']}",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=menu_for_user(sheets, message.from_user.id),
         )
     except Exception as e:
         await state.clear()
         await message.answer(
             f"❌ Ошибка при записи в журнал: {e}",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=menu_for_user(sheets, message.from_user.id),
         )
