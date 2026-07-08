@@ -48,7 +48,7 @@ def human_dt(value: str) -> str:
     if not value:
         return "—"
     try:
-        dt = parse_dt(str(value).strip())
+        dt = parse_dt(value)
         return format_dt(dt)
     except Exception:
         return str(value)
@@ -292,10 +292,10 @@ async def admin_add_shift_comment(message: Message, state: FSMContext, sheets: S
             f"⏱ {duration_rounded:.1f} ч",
             reply_markup=admin_menu_keyboard(),
         )
-    except Exception:
+    except Exception as e:
         await state.clear()
         await message.answer(
-            "❌ Ошибка при записи смены.",
+            f"❌ Ошибка при записи смены: {e}",
             reply_markup=admin_menu_keyboard(),
         )
 
@@ -435,9 +435,9 @@ async def admin_close_shift_comment(message: Message, state: FSMContext, sheets:
             f"⏱ Продолжительность: {duration_rounded:.1f} ч",
             reply_markup=admin_menu_keyboard(),
         )
-    except Exception:
+    except Exception as e:
         await state.clear()
         await message.answer(
-            "❌ Ошибка при закрытии смены.",
+            f"❌ Ошибка при закрытии смены: {e}",
             reply_markup=admin_menu_keyboard(),
         )
