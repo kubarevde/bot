@@ -1,9 +1,18 @@
+import calendar
 import uuid
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 from aiogram import F, Router
+from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    Message,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+)
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.keyboards.main_menu import admin_menu_keyboard, cancel_keyboard
 from app.services.sheets import SheetsClient
@@ -12,6 +21,25 @@ from app.states.workday import AdminAddShift, AdminCloseShift
 router = Router()
 
 WORK_TYPES = ["Поле", "Ремонт", "Закуп", "Дом", "Другое"]
+
+
+class DatePickCallback(CallbackData, prefix="dp"):
+    action: str
+    year: int
+    month: int
+    day: int
+    target: str
+
+
+class TimePickCallback(CallbackData, prefix="tp"):
+    hour: int
+    minute: int
+    target: str
+
+
+class QuickDateCallback(CallbackData, prefix="qd"):
+    action: str
+    target: str
 
 
 def format_dt(dt: datetime) -> str:
@@ -24,6 +52,31 @@ def parse_dt(value: str) -> datetime:
         return datetime.fromisoformat(value)
     except ValueError:
         return datetime.strptime(value, "%d.%m.%Y %H:%M:%S")
+
+
+def human_dt(value: str) -> str:
+    if not value:
+        return "—"
+    try:
+        dt = parse_dt(value)
+        return format_dt(dt)
+    except Exception:
+        return str(value)
+
+
+def combine_date_time(d: date, hour: int, minute: int) -> datetime:
+    return datetime(d.year, d.month, d.day, hour, minute, 0)
+
+
+def resolve_quick_date(action: str) -> date:
+    today = date.today()
+    if action == "today":
+        return today
+    if action == "yesterday":
+        return today - timedelta(days=1)
+    if action == "tomorrow":
+        return today + timedelta(days=1)
+    return today
 
 
 def work_type_keyboard() -> ReplyKeyboardMarkup:
@@ -44,21 +97,96 @@ def employee_keyboard(employees: list[dict]) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
-def human_dt(value: str) -> str:
-    if not value:
-        return "—"
-    try:
-        dt = parse_dt(value)
-        return format_dt(dt)
-    except Exception:
-        return str(value)
-
-
 def parse_employee_code_from_button(text: str) -> str:
     text = str(text).strip()
     if "[" in text and text.endswith("]"):
         return text.split("[")[-1].rstrip("]").strip()
     return ""
+
+
+def quick_date_keyboard(target: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Сегодня", callback_data=QuickDateCallback(action="today", target=target))
+    builder.button(text="Вчера", callback_data=QuickDateCallback(action="yesterday", target=target))
+    builder.button(text="Завтра", callback_data=QuickDateCallback(action="tomorrow", target=target))
+    builder.button(text="📅 Другая дата", callback_data=QuickDateCallback(action="calendar", target=target))
+    builder.adjust(2, 1, 1)
+    return builder.as_markup()
+
+
+def month_calendar_keyboard(year: int, month: int, target: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text=f"{calendar.month_name[month]} {year}",
+        callback_data=DatePickCallback(action="ignore", year=year, month=month, day=0, target=target),
+    )
+
+    for wd in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]:
+        builder.button(
+            text=wd,
+            callback_data=DatePickCallback(action="ignore", year=year, month=month, day=0, target=target),
+        )
+
+    for week in calendar.monthcalendar(year, month):
+        for day_num in week:
+            if day_num == 0:
+                builder.button(
+                    text=" ",
+                    callback_data=DatePickCallback(action="ignore", year=year, month=month, day=0, target=target),
+                )
+            else:
+                builder.button(
+                    text=str(day_num),
+                    callback_data=DatePickCallback(
+                        action="select",
+                        year=year,
+                        month=month,
+                        day=day_num,
+                        target=target,
+                    ),
+                )
+
+    if month == 1:
+        prev_year, prev_month = year - 1, 12
+    else:
+        prev_year, prev_month = year, month - 1
+
+    if month == 12:
+        next_year, next_month = year + 1, 1
+    else:
+        next_year, next_month = year, month + 1
+
+    builder.button(
+        text="◀️",
+        callback_data=DatePickCallback(action="prev", year=prev_year, month=prev_month, day=1, target=target),
+    )
+    builder.button(
+        text="Сегодня",
+        callback_data=DatePickCallback(
+            action="current",
+            year=date.today().year,
+            month=date.today().month,
+            day=date.today().day,
+            target=target,
+        ),
+    )
+    builder.button(
+        text="▶️",
+        callback_data=DatePickCallback(action="next", year=next_year, month=next_month, day=1, target=target),
+    )
+
+    builder.adjust(1, 7, 7, 7, 7, 7, 7, 1, 3)
+    return builder.as_markup()
+
+
+def time_keyboard(target: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for hour in range(6, 24):
+        builder.button(text=f"{hour:02d}:00", callback_data=TimePickCallback(hour=hour, minute=0, target=target))
+        builder.button(text=f"{hour:02d}:30", callback_data=TimePickCallback(hour=hour, minute=30, target=target))
+    builder.adjust(4)
+    return builder.as_markup()
 
 
 @router.message(F.text == "👥 Кто на смене")
@@ -109,10 +237,7 @@ async def admin_add_shift_begin(message: Message, state: FSMContext, sheets: She
 
     await state.clear()
     await state.set_state(AdminAddShift.employee_select)
-    await message.answer(
-        "Выбери сотрудника:",
-        reply_markup=employee_keyboard(employees),
-    )
+    await message.answer("Выбери сотрудника:", reply_markup=employee_keyboard(employees))
 
 
 @router.message(AdminAddShift.employee_select)
@@ -137,59 +262,158 @@ async def admin_add_shift_employee(message: Message, state: FSMContext, sheets: 
         return
 
     await state.update_data(employee=employee)
-    await state.set_state(AdminAddShift.start_time)
-    await message.answer(
-        "Введите время начала в формате YYYY-MM-DD HH:MM\n"
-        "Пример: 2026-07-08 08:30",
-        reply_markup=cancel_keyboard(),
-    )
+    await state.set_state(AdminAddShift.start_date)
+    await message.answer("Выбери дату начала:", reply_markup=quick_date_keyboard("add_start"))
 
 
-@router.message(AdminAddShift.start_time)
-async def admin_add_shift_start_time(message: Message, state: FSMContext) -> None:
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+@router.callback_query(QuickDateCallback.filter(F.target == "add_start"))
+async def admin_add_start_quick_date(
+    callback: CallbackQuery,
+    callback_data: QuickDateCallback,
+    state: FSMContext,
+) -> None:
+    if callback_data.action == "calendar":
+        today = date.today()
+        await callback.message.edit_text(
+            "Выбери дату начала:",
+            reply_markup=month_calendar_keyboard(today.year, today.month, "add_start"),
+        )
+    else:
+        selected_date = resolve_quick_date(callback_data.action)
+        await state.update_data(start_date_value=selected_date.isoformat())
+        await state.set_state(AdminAddShift.start_time)
+        await callback.message.edit_text(
+            f"Дата начала: {selected_date.strftime('%d.%m.%Y')}\nВыбери время начала:",
+            reply_markup=time_keyboard("add_start"),
+        )
+    await callback.answer()
+
+
+@router.callback_query(DatePickCallback.filter(F.target == "add_start"))
+async def admin_add_start_calendar(
+    callback: CallbackQuery,
+    callback_data: DatePickCallback,
+    state: FSMContext,
+) -> None:
+    if callback_data.action == "ignore":
+        await callback.answer()
         return
 
-    try:
-        start_dt = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
-    except ValueError:
-        await message.answer("Неверный формат. Используй YYYY-MM-DD HH:MM")
+    if callback_data.action in ("prev", "next", "current"):
+        await callback.message.edit_reply_markup(
+            reply_markup=month_calendar_keyboard(callback_data.year, callback_data.month, "add_start")
+        )
+        await callback.answer()
         return
+
+    if callback_data.action == "select":
+        selected_date = date(callback_data.year, callback_data.month, callback_data.day)
+        await state.update_data(start_date_value=selected_date.isoformat())
+        await state.set_state(AdminAddShift.start_time)
+        await callback.message.edit_text(
+            f"Дата начала: {selected_date.strftime('%d.%m.%Y')}\nВыбери время начала:",
+            reply_markup=time_keyboard("add_start"),
+        )
+        await callback.answer()
+        return
+
+
+@router.callback_query(TimePickCallback.filter(F.target == "add_start"))
+async def admin_add_start_time(
+    callback: CallbackQuery,
+    callback_data: TimePickCallback,
+    state: FSMContext,
+) -> None:
+    data = await state.get_data()
+    start_date_value = date.fromisoformat(data["start_date_value"])
+    start_dt = combine_date_time(start_date_value, callback_data.hour, callback_data.minute)
 
     await state.update_data(start_time=format_dt(start_dt))
-    await state.set_state(AdminAddShift.end_time)
-    await message.answer(
-        "Введите время окончания в формате YYYY-MM-DD HH:MM\n"
-        "Пример: 2026-07-08 17:00",
-        reply_markup=cancel_keyboard(),
+    await state.set_state(AdminAddShift.end_date)
+    await callback.message.edit_text(
+        f"Начало: {format_dt(start_dt)}\n\nВыбери дату окончания:",
+        reply_markup=quick_date_keyboard("add_end"),
     )
+    await callback.answer()
 
 
-@router.message(AdminAddShift.end_time)
-async def admin_add_shift_end_time(message: Message, state: FSMContext) -> None:
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+@router.callback_query(QuickDateCallback.filter(F.target == "add_end"))
+async def admin_add_end_quick_date(
+    callback: CallbackQuery,
+    callback_data: QuickDateCallback,
+    state: FSMContext,
+) -> None:
+    if callback_data.action == "calendar":
+        data = await state.get_data()
+        start_dt = parse_dt(data["start_time"])
+        await callback.message.edit_text(
+            "Выбери дату окончания:",
+            reply_markup=month_calendar_keyboard(start_dt.year, start_dt.month, "add_end"),
+        )
+    else:
+        selected_date = resolve_quick_date(callback_data.action)
+        await state.update_data(end_date_value=selected_date.isoformat())
+        await state.set_state(AdminAddShift.end_time)
+        await callback.message.edit_text(
+            f"Дата окончания: {selected_date.strftime('%d.%m.%Y')}\nВыбери время окончания:",
+            reply_markup=time_keyboard("add_end"),
+        )
+    await callback.answer()
+
+
+@router.callback_query(DatePickCallback.filter(F.target == "add_end"))
+async def admin_add_end_calendar(
+    callback: CallbackQuery,
+    callback_data: DatePickCallback,
+    state: FSMContext,
+) -> None:
+    if callback_data.action == "ignore":
+        await callback.answer()
         return
 
-    try:
-        end_dt = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
-    except ValueError:
-        await message.answer("Неверный формат. Используй YYYY-MM-DD HH:MM")
+    if callback_data.action in ("prev", "next", "current"):
+        await callback.message.edit_reply_markup(
+            reply_markup=month_calendar_keyboard(callback_data.year, callback_data.month, "add_end")
+        )
+        await callback.answer()
         return
 
+    if callback_data.action == "select":
+        selected_date = date(callback_data.year, callback_data.month, callback_data.day)
+        await state.update_data(end_date_value=selected_date.isoformat())
+        await state.set_state(AdminAddShift.end_time)
+        await callback.message.edit_text(
+            f"Дата окончания: {selected_date.strftime('%d.%m.%Y')}\nВыбери время окончания:",
+            reply_markup=time_keyboard("add_end"),
+        )
+        await callback.answer()
+        return
+
+
+@router.callback_query(TimePickCallback.filter(F.target == "add_end"))
+async def admin_add_end_time(
+    callback: CallbackQuery,
+    callback_data: TimePickCallback,
+    state: FSMContext,
+) -> None:
     data = await state.get_data()
+    end_date_value = date.fromisoformat(data["end_date_value"])
+    end_dt = combine_date_time(end_date_value, callback_data.hour, callback_data.minute)
     start_dt = parse_dt(data["start_time"])
 
     if end_dt <= start_dt:
-        await message.answer("Время окончания должно быть позже времени начала.")
+        await callback.answer("Окончание должно быть позже начала", show_alert=True)
         return
 
     await state.update_data(end_time=format_dt(end_dt))
     await state.set_state(AdminAddShift.location)
-    await message.answer("Укажи объект / место работы:", reply_markup=cancel_keyboard())
+    await callback.message.edit_text(
+        f"Начало: {data['start_time']}\n"
+        f"Окончание: {format_dt(end_dt)}\n\n"
+        f"Укажи объект / место работы:"
+    )
+    await callback.message.answer("Укажи объект / место работы:", reply_markup=cancel_keyboard())
+    await callback.answer()
 
 
 @router.message(AdminAddShift.location)
@@ -342,43 +566,93 @@ async def admin_close_shift_employee(message: Message, state: FSMContext, sheets
         return
 
     await state.update_data(employee=employee, row_index=row_index)
-    await state.set_state(AdminCloseShift.end_time)
-    await message.answer(
-        "Введите время окончания в формате YYYY-MM-DD HH:MM",
-        reply_markup=cancel_keyboard(),
-    )
+    await state.set_state(AdminCloseShift.end_date)
+    await message.answer("Выбери дату окончания:", reply_markup=quick_date_keyboard("close_end"))
 
 
-@router.message(AdminCloseShift.end_time)
-async def admin_close_shift_end_time(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+@router.callback_query(QuickDateCallback.filter(F.target == "close_end"))
+async def admin_close_end_quick_date(
+    callback: CallbackQuery,
+    callback_data: QuickDateCallback,
+    state: FSMContext,
+) -> None:
+    if callback_data.action == "calendar":
+        today = date.today()
+        await callback.message.edit_text(
+            "Выбери дату окончания:",
+            reply_markup=month_calendar_keyboard(today.year, today.month, "close_end"),
+        )
+    else:
+        selected_date = resolve_quick_date(callback_data.action)
+        await state.update_data(end_date_value=selected_date.isoformat())
+        await state.set_state(AdminCloseShift.end_time)
+        await callback.message.edit_text(
+            f"Дата окончания: {selected_date.strftime('%d.%m.%Y')}\nВыбери время окончания:",
+            reply_markup=time_keyboard("close_end"),
+        )
+    await callback.answer()
+
+
+@router.callback_query(DatePickCallback.filter(F.target == "close_end"))
+async def admin_close_end_calendar(
+    callback: CallbackQuery,
+    callback_data: DatePickCallback,
+    state: FSMContext,
+) -> None:
+    if callback_data.action == "ignore":
+        await callback.answer()
         return
 
-    try:
-        end_dt = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
-    except ValueError:
-        await message.answer("Неверный формат. Используй YYYY-MM-DD HH:MM")
+    if callback_data.action in ("prev", "next", "current"):
+        await callback.message.edit_reply_markup(
+            reply_markup=month_calendar_keyboard(callback_data.year, callback_data.month, "close_end")
+        )
+        await callback.answer()
         return
 
+    if callback_data.action == "select":
+        selected_date = date(callback_data.year, callback_data.month, callback_data.day)
+        await state.update_data(end_date_value=selected_date.isoformat())
+        await state.set_state(AdminCloseShift.end_time)
+        await callback.message.edit_text(
+            f"Дата окончания: {selected_date.strftime('%d.%m.%Y')}\nВыбери время окончания:",
+            reply_markup=time_keyboard("close_end"),
+        )
+        await callback.answer()
+        return
+
+
+@router.callback_query(TimePickCallback.filter(F.target == "close_end"))
+async def admin_close_end_time(
+    callback: CallbackQuery,
+    callback_data: TimePickCallback,
+    state: FSMContext,
+    sheets: SheetsClient,
+) -> None:
     data = await state.get_data()
+    end_date_value = date.fromisoformat(data["end_date_value"])
+    end_dt = combine_date_time(end_date_value, callback_data.hour, callback_data.minute)
+
     row_values = sheets.work_log_sheet().row_values(data["row_index"])
     start_time_str = row_values[5] if len(row_values) > 5 else ""
 
     try:
         start_dt = parse_dt(start_time_str)
     except ValueError:
-        await message.answer("Не удалось прочитать время начала смены.")
+        await callback.answer("Не удалось прочитать время начала", show_alert=True)
         return
 
     if end_dt <= start_dt:
-        await message.answer("Время окончания должно быть позже времени начала.")
+        await callback.answer("Окончание должно быть позже начала", show_alert=True)
         return
 
     await state.update_data(end_time=format_dt(end_dt))
     await state.set_state(AdminCloseShift.description)
-    await message.answer("Что сделал? Краткое описание работы:", reply_markup=cancel_keyboard())
+    await callback.message.edit_text(
+        f"Окончание: {format_dt(end_dt)}\n\nЧто сделал? Краткое описание работы:"
+    )
+    await callback.message.answer("Что сделал? Краткое описание работы:", reply_markup=cancel_keyboard())
+    await callback.answer()
 
 
 @router.message(AdminCloseShift.description)
