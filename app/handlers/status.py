@@ -29,6 +29,21 @@ def human_dt(value: str) -> str:
         return str(value)
 
 
+def build_geo_block(row: dict) -> str:
+    lat = str(row.get("latitude", "")).strip()
+    lon = str(row.get("longitude", "")).strip()
+
+    if not lat or not lon:
+        return "📌 Геометка: нет"
+
+    maps_url = f"https://www.google.com/maps?q={lat},{lon}"
+    return (
+        f"📌 Геометка: есть\n"
+        f"🧭 Координаты: {lat}, {lon}\n"
+        f"🗺 Карта: {maps_url}"
+    )
+
+
 @router.message(F.text == "📊 Мой статус")
 async def my_status(message: Message, sheets: SheetsClient) -> None:
     open_shift = sheets.get_open_shift(message.from_user.id)
@@ -52,8 +67,7 @@ async def my_status(message: Message, sheets: SheetsClient) -> None:
 
     hours = total_minutes // 60
     minutes = total_minutes % 60
-
-    geo_text = "есть" if open_shift.get("latitude") and open_shift.get("longitude") else "нет"
+    geo_block = build_geo_block(open_shift)
 
     await message.answer(
         f"📊 Текущая смена\n\n"
@@ -62,7 +76,7 @@ async def my_status(message: Message, sheets: SheetsClient) -> None:
         f"🚜 Техника: {open_shift.get('equipment', '—')}\n"
         f"🕐 Начало: {human_dt(start_time_raw)}\n"
         f"⏳ Прошло: {hours} ч. {minutes} мин.\n"
-        f"📌 Геометка: {geo_text}",
+        f"{geo_block}",
         reply_markup=menu_for_user(sheets, message.from_user.id),
     )
 
@@ -75,10 +89,10 @@ async def today_info(message: Message, sheets: SheetsClient) -> None:
 
     if is_admin:
         rows = sheets.get_shifts_for_date(today)
-        title = f"📅 <b>Все смены за сегодня ({today.strftime('%d.%m.%Y')})</b>"
+        title = f"📅 Все смены за сегодня ({today.strftime('%d.%m.%Y')})"
     else:
         rows = sheets.get_user_shifts_for_date(message.from_user.id, today)
-        title = f"📅 <b>Ваши смены за сегодня ({today.strftime('%d.%m.%Y')})</b>"
+        title = f"📅 Ваши смены за сегодня ({today.strftime('%d.%m.%Y')})"
 
     if not rows:
         await message.answer(
@@ -122,15 +136,23 @@ async def today_info(message: Message, sheets: SheetsClient) -> None:
         hours = minutes // 60
         mins = minutes % 60
 
+        lat = str(row.get("latitude", "")).strip()
+        lon = str(row.get("longitude", "")).strip()
+        if lat and lon:
+            geo_line = f"\n🗺 Карта: https://www.google.com/maps?q={lat},{lon}"
+        else:
+            geo_line = "\n📌 Геометка: нет"
+
         if is_admin:
             lines.append(
-                f"👤 <b>{employee_name}</b>\n"
+                f"👤 {employee_name}\n"
                 f"📍 Объект: {location}\n"
                 f"🔧 Тип: {work_type}\n"
                 f"🚜 Техника: {equipment or '—'}\n"
                 f"🕐 {human_dt(start_time)} → {end_text}\n"
                 f"⏱ {hours} ч. {mins} мин.\n"
                 f"{status_text}"
+                f"{geo_line}"
             )
         else:
             lines.append(
@@ -140,13 +162,14 @@ async def today_info(message: Message, sheets: SheetsClient) -> None:
                 f"🕐 {human_dt(start_time)} → {end_text}\n"
                 f"⏱ {hours} ч. {mins} мин.\n"
                 f"{status_text}"
+                f"{geo_line}"
             )
 
     total_hours = total_minutes // 60
     total_mins = total_minutes % 60
 
     await message.answer(
-        title + "\n\n" + "\n\n".join(lines) + f"\n\n<b>Итого:</b> {total_hours} ч. {total_mins} мин.",
+        title + "\n\n" + "\n\n".join(lines) + f"\n\nИтого: {total_hours} ч. {total_mins} мин.",
         reply_markup=menu_for_user(sheets, message.from_user.id),
         parse_mode="HTML",
     )
