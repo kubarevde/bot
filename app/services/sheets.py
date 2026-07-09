@@ -1,4 +1,6 @@
 import json
+from datetime import datetime, date
+
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -8,6 +10,20 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+
+def parse_sheet_dt(value: str) -> datetime | None:
+    value = str(value).strip()
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        try:
+            return datetime.strptime(value, "%d.%m.%Y %H:%M:%S")
+        except ValueError:
+            return None
 
 
 class SheetsClient:
@@ -94,6 +110,35 @@ class SheetsClient:
     def get_active_shifts(self) -> list[dict]:
         rows = self.work_log_sheet().get_all_records()
         return [row for row in rows if str(row.get("status", "")).strip().lower() == "open"]
+
+    def get_shifts_for_date(self, target_date: date) -> list[dict]:
+        rows = self.work_log_sheet().get_all_records()
+        result = []
+
+        for row in rows:
+            row_date = str(row.get("date", "")).strip()
+            start_time = str(row.get("start_time", "")).strip()
+
+            if row_date:
+                try:
+                    if date.fromisoformat(row_date) == target_date:
+                        result.append(row)
+                        continue
+                except ValueError:
+                    pass
+
+            dt = parse_sheet_dt(start_time)
+            if dt and dt.date() == target_date:
+                result.append(row)
+
+        return result
+
+    def get_user_shifts_for_date(self, telegram_id: int, target_date: date) -> list[dict]:
+        rows = self.get_shifts_for_date(target_date)
+        return [
+            row for row in rows
+            if str(row.get("telegram_id", "")).strip() == str(telegram_id)
+        ]
 
     def get_open_shift_row_index(self, telegram_id: int):
         values = self.work_log_sheet().get_all_values()
