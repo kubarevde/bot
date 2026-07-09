@@ -182,9 +182,15 @@ def month_calendar_keyboard(year: int, month: int, target: str) -> InlineKeyboar
 
 def time_keyboard(target: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    for hour in range(6, 24):
-        builder.button(text=f"{hour:02d}:00", callback_data=TimePickCallback(hour=hour, minute=0, target=target))
-        builder.button(text=f"{hour:02d}:30", callback_data=TimePickCallback(hour=hour, minute=30, target=target))
+    for hour in range(0, 24):
+        builder.button(
+            text=f"{hour:02d}:00",
+            callback_data=TimePickCallback(hour=hour, minute=0, target=target),
+        )
+        builder.button(
+            text=f"{hour:02d}:30",
+            callback_data=TimePickCallback(hour=hour, minute=30, target=target),
+        )
     builder.adjust(4)
     return builder.as_markup()
 
