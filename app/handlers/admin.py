@@ -1,6 +1,7 @@
 import calendar
 import uuid
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.filters.callback_data import CallbackData
@@ -21,6 +22,7 @@ from app.states.workday import AdminAddShift, AdminCloseShift
 router = Router()
 
 WORK_TYPES = ["Поле", "Ремонт", "Закуп", "Дом", "Другое"]
+TZ = ZoneInfo("Asia/Bangkok")
 
 
 class DatePickCallback(CallbackData, prefix="dp"):
@@ -193,6 +195,74 @@ def time_keyboard(target: str) -> InlineKeyboardMarkup:
         )
     builder.adjust(4)
     return builder.as_markup()
+
+
+@router.message(F.text == "Сегодня")
+async def today_shifts(message: Message, sheets: SheetsClient) -> None:
+    today = datetime.now(TZ).date()
+    is_admin = sheets.is_admin(message.from_user.id)
+
+    if is_admin:
+        rows = sheets.get_shifts_for_date(today)
+        title = f"📅 <b>Все смены за сегодня ({today.strftime('%d.%m.%Y')})</b>"
+        reply_markup = admin_menu_keyboard()
+    else:
+        rows = sheets.get_user_shifts_for_date(message.from_user.id, today)
+        title = f"📅 <b>Ваши смены за сегодня ({today.strftime('%d.%m.%Y')})</b>"
+        reply_markup = None
+
+    if not rows:
+        await message.answer(
+            "За сегодня смен не найдено.",
+            reply_markup=reply_markup,
+        )
+        return
+
+    total_minutes = 0
+    lines = []
+
+    for row in rows:
+        employee_name = row.get("employee_name", "—")
+        work_type = row.get("work_type", "—")
+        location = row.get("location", "—")
+        start_time = row.get("start_time", "—")
+        end_time = row.get("end_time", "—")
+        status = str(row.get("status", "")).strip().lower()
+        duration_raw = row.get("duration_raw", 0)
+
+        try:
+            minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
+        except (ValueError, TypeError):
+            minutes = 0
+
+        total_minutes += minutes
+        status_text = "🟢 Открыта" if status == "open" else "✅ Закрыта"
+
+        if is_admin:
+            lines.append(
+                f"👤 <b>{employee_name}</b>\n"
+                f"📍 {location}\n"
+                f"🔧 {work_type}\n"
+                f"🕐 {start_time} → {end_time or '—'}\n"
+                f"⏱ {minutes} мин.\n"
+                f"{status_text}"
+            )
+        else:
+            lines.append(
+                f"📍 {location}\n"
+                f"🔧 {work_type}\n"
+                f"🕐 {start_time} → {end_time or '—'}\n"
+                f"⏱ {minutes} мин.\n"
+                f"{status_text}"
+            )
+
+    total_hours = round(total_minutes / 60, 1)
+
+    await message.answer(
+        title + "\n\n" + "\n\n".join(lines) + f"\n\n<b>Итого:</b> {total_minutes} мин. / {total_hours} ч.",
+        reply_markup=reply_markup,
+        parse_mode="HTML",
+    )
 
 
 @router.message(F.text == "👥 Кто на смене")
