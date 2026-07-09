@@ -199,7 +199,8 @@ def time_keyboard(target: str) -> InlineKeyboardMarkup:
 
 @router.message(F.text == "Сегодня")
 async def today_shifts(message: Message, sheets: SheetsClient) -> None:
-    today = datetime.now(TZ).date()
+    now = datetime.now(TZ)
+    today = now.date()
     is_admin = sheets.is_admin(message.from_user.id)
 
     if is_admin:
@@ -225,25 +226,37 @@ async def today_shifts(message: Message, sheets: SheetsClient) -> None:
         employee_name = row.get("employee_name", "—")
         work_type = row.get("work_type", "—")
         location = row.get("location", "—")
-        start_time = row.get("start_time", "—")
-        end_time = row.get("end_time", "—")
+        start_time = str(row.get("start_time", "")).strip()
+        end_time = str(row.get("end_time", "")).strip()
         status = str(row.get("status", "")).strip().lower()
         duration_raw = row.get("duration_raw", 0)
 
-        try:
-            minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
-        except (ValueError, TypeError):
-            minutes = 0
+        minutes = 0
+
+        if status == "open":
+            try:
+                start_dt = parse_dt(start_time)
+                minutes = max(0, int((now.replace(tzinfo=None) - start_dt).total_seconds() // 60))
+            except Exception:
+                minutes = 0
+            status_text = "🟢 На смене"
+            end_time_display = "сейчас"
+        else:
+            try:
+                minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
+            except (ValueError, TypeError):
+                minutes = 0
+            status_text = "✅ Закрыта"
+            end_time_display = end_time or "—"
 
         total_minutes += minutes
-        status_text = "🟢 Открыта" if status == "open" else "✅ Закрыта"
 
         if is_admin:
             lines.append(
                 f"👤 <b>{employee_name}</b>\n"
                 f"📍 {location}\n"
                 f"🔧 {work_type}\n"
-                f"🕐 {start_time} → {end_time or '—'}\n"
+                f"🕐 {human_dt(start_time)} → {human_dt(end_time_display) if end_time_display not in ('сейчас', '—') else end_time_display}\n"
                 f"⏱ {minutes} мин.\n"
                 f"{status_text}"
             )
@@ -251,7 +264,7 @@ async def today_shifts(message: Message, sheets: SheetsClient) -> None:
             lines.append(
                 f"📍 {location}\n"
                 f"🔧 {work_type}\n"
-                f"🕐 {start_time} → {end_time or '—'}\n"
+                f"🕐 {human_dt(start_time)} → {human_dt(end_time_display) if end_time_display not in ('сейчас', '—') else end_time_display}\n"
                 f"⏱ {minutes} мин.\n"
                 f"{status_text}"
             )
