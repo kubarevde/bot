@@ -50,7 +50,52 @@ class SheetsClient:
 
     def work_log_sheet(self):
         return self._spreadsheet.worksheet("work_log")
+        
+    def locations_sheet(self):
+        return self._spreadsheet.worksheet("locations")
 
+    def work_types_sheet(self):
+        return self._spreadsheet.worksheet("work_types")
+
+    def equipment_sheet(self):
+        return self._spreadsheet.worksheet("equipment")
+
+    def _is_truthy(self, value) -> bool:
+        return str(value).strip().lower() in ("true", "1", "yes", "y", "да")
+
+    def _get_directory_items(self, sheet_getter) -> list[str]:
+        rows = sheet_getter().get_all_records()
+        prepared = []
+
+        for row in rows:
+            name = str(row.get("name", "")).strip()
+            if not name:
+                continue
+
+            is_active = row.get("is_active", True)
+            if str(is_active).strip() != "" and not self._is_truthy(is_active):
+                continue
+
+            sort_order_raw = row.get("sort_order", "")
+            try:
+                sort_order = int(sort_order_raw)
+            except (TypeError, ValueError):
+                sort_order = 999999
+
+            prepared.append((sort_order, name.lower(), name))
+
+        prepared.sort(key=lambda x: (x[0], x[1]))
+        return [item[2] for item in prepared]
+
+    def get_locations(self) -> list[str]:
+        return self._get_directory_items(self.locations_sheet)
+
+    def get_work_types(self) -> list[str]:
+        return self._get_directory_items(self.work_types_sheet)
+
+    def get_equipment(self) -> list[str]:
+        return self._get_directory_items(self.equipment_sheet)
+        
     def append_work_log_row(self, row: list) -> None:
         self.work_log_sheet().append_row(row, value_input_option="RAW")
 
