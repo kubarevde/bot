@@ -242,24 +242,10 @@ async def work_start_equipment(message: Message, state: FSMContext, sheets: Shee
         return
 
     await state.update_data(equipment=message.text.strip(), equipment_manual=False)
-    await state.set_state(StartWork.comment)
-    await message.answer(
-        "💬 Комментарий (или напиши «нет»):",
-        reply_markup=cancel_keyboard(),
-    )
-
-
-@router.message(StartWork.comment)
-async def work_start_comment(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("Отменено.", reply_markup=menu_for_user(sheets, message.from_user.id))
-        return
 
     data = await state.get_data()
     employee = data["employee"]
     now = datetime.now(TZ).replace(tzinfo=None)
-    comment = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
 
     row = [
         str(uuid.uuid4())[:8],
@@ -273,7 +259,7 @@ async def work_start_comment(message: Message, state: FSMContext, sheets: Sheets
         data.get("location", ""),
         data.get("equipment", ""),
         "",
-        comment,
+        "",
         "open",
         "",
         "",
