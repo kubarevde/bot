@@ -6,7 +6,6 @@ class StartWork(StatesGroup):
     geo = State()
     work_type = State()
     equipment = State()
-    comment = State()
 
 
 class EndWork(StatesGroup):
