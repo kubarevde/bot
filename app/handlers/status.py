@@ -112,7 +112,7 @@ async def today_info(message: Message, sheets: SheetsClient) -> None:
         start_time = str(row.get("start_time", "")).strip()
         end_time = str(row.get("end_time", "")).strip()
         status = str(row.get("status", "")).strip().lower()
-        duration_raw = row.get("duration_raw", 0)
+        duration_raw = row.get("duration_raw_minutes", 0)
 
         minutes = 0
 
@@ -126,9 +126,17 @@ async def today_info(message: Message, sheets: SheetsClient) -> None:
             end_text = "сейчас"
         else:
             try:
-                minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
-            except (ValueError, TypeError):
-                minutes = 0
+                if start_time and end_time:
+                    start_dt = parse_dt(start_time)
+                    end_dt = parse_dt(end_time)
+                    minutes = max(0, int((end_dt - start_dt).total_seconds() // 60))
+                else:
+                    minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
+            except Exception:
+                try:
+                    minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
+                except (ValueError, TypeError):
+                    minutes = 0
             status_text = "✅ Закрыта"
             end_text = human_dt(end_time) if end_time else "—"
 
