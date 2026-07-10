@@ -116,6 +116,17 @@ def options_keyboard(items: list[str], add_manual: bool = True) -> ReplyKeyboard
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
+def comment_choice_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Нет")],
+            [KeyboardButton(text="❌ Отмена")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
 def parse_employee_code_from_button(text: str) -> str:
     text = str(text).strip()
     if "[" in text and text.endswith("]"):
@@ -217,12 +228,21 @@ def time_keyboard(target: str) -> InlineKeyboardMarkup:
 @router.message(
     F.text == "❌ Отмена",
     (
+        AdminAddShift.employee_select,
         AdminAddShift.start_date,
         AdminAddShift.start_time,
         AdminAddShift.end_date,
         AdminAddShift.end_time,
+        AdminAddShift.location,
+        AdminAddShift.work_type,
+        AdminAddShift.equipment,
+        AdminAddShift.description,
+        AdminAddShift.comment,
+        AdminCloseShift.employee_select,
         AdminCloseShift.end_date,
         AdminCloseShift.end_time,
+        AdminCloseShift.description,
+        AdminCloseShift.comment,
         AdminBroadcast.target_select,
         AdminBroadcast.message_text,
     ),
@@ -882,7 +902,7 @@ async def admin_close_shift_description(message: Message, state: FSMContext) -> 
 
     await state.update_data(description=message.text.strip())
     await state.set_state(AdminCloseShift.comment)
-    await message.answer("Комментарий (или «нет»):", reply_markup=cancel_keyboard())
+    await message.answer("Комментарий к завершению:", reply_markup=comment_choice_keyboard())
 
 
 @router.message(AdminCloseShift.comment)
@@ -906,7 +926,7 @@ async def admin_close_shift_comment(message: Message, state: FSMContext, sheets:
         duration_raw = 0
         duration_rounded = 0.0
 
-    comment_text = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
+    comment_text = "" if message.text.strip() == "Нет" else message.text.strip()
     admin_note = f"Закрыто админом @{message.from_user.username or message.from_user.id}"
     final_comment = admin_note if not comment_text else f"{admin_note}. {comment_text}"
 
