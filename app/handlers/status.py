@@ -102,82 +102,138 @@ async def today_info(message: Message, sheets: SheetsClient) -> None:
         return
 
     total_minutes = 0
-    lines = []
 
-    for row in rows:
-        employee_name = row.get("employee_name", "—")
-        work_type = row.get("work_type", "—")
-        location = row.get("location", "—")
-        equipment = row.get("equipment", "—")
-        start_time = str(row.get("start_time", "")).strip()
-        end_time = str(row.get("end_time", "")).strip()
-        status = str(row.get("status", "")).strip().lower()
-        duration_raw = row.get("duration_raw_minutes", 0)
+    if is_admin:
+        employee_blocks: dict[str, list[str]] = {}
+        employee_totals: dict[str, int] = {}
 
-        minutes = 0
+        for row in rows:
+            employee_name = row.get("employee_name", "—")
+            work_type = row.get("work_type", "—")
+            location = row.get("location", "—")
+            equipment = row.get("equipment", "—")
+            start_time = str(row.get("start_time", "")).strip()
+            end_time = str(row.get("end_time", "")).strip()
+            status = str(row.get("status", "")).strip().lower()
+            duration_raw = row.get("duration_raw_minutes", 0)
 
-        if status == "open":
-            try:
-                start_dt = parse_dt(start_time)
-                minutes = max(0, int((now - start_dt).total_seconds() // 60))
-            except Exception:
-                minutes = 0
-            status_text = "🟢 На смене"
-            end_text = "сейчас"
-        else:
-            try:
-                if start_time and end_time:
-                    start_dt = parse_dt(start_time)
-                    end_dt = parse_dt(end_time)
-                    minutes = max(0, int((end_dt - start_dt).total_seconds() // 60))
-                else:
-                    minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
-            except Exception:
+            minutes = 0
+
+            if status == "open":
                 try:
-                    minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
-                except (ValueError, TypeError):
+                    start_dt = parse_dt(start_time)
+                    minutes = max(0, int((now - start_dt).total_seconds() // 60))
+                except Exception:
                     minutes = 0
-            status_text = "✅ Закрыта"
-            end_text = human_dt(end_time) if end_time else "—"
+                status_text = "🟢 На смене"
+                end_text = "сейчас"
+            else:
+                try:
+                    if start_time and end_time:
+                        start_dt = parse_dt(start_time)
+                        end_dt = parse_dt(end_time)
+                        minutes = max(0, int((end_dt - start_dt).total_seconds() // 60))
+                    else:
+                        minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
+                except Exception:
+                    try:
+                        minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
+                    except (ValueError, TypeError):
+                        minutes = 0
 
-        total_minutes += minutes
-        hours = minutes // 60
-        mins = minutes % 60
+                status_text = "✅ Закрыта"
+                end_text = human_dt(end_time) if end_time else "—"
 
-        lat = str(row.get("latitude", "")).strip()
-        lon = str(row.get("longitude", "")).strip()
-        if lat and lon:
-            geo_line = f"\n🗺 Карта: https://www.google.com/maps?q={lat},{lon}"
-        else:
-            geo_line = "\n📌 Геометка: нет"
+            total_minutes += minutes
+            employee_totals[employee_name] = employee_totals.get(employee_name, 0) + minutes
 
-        if is_admin:
-            lines.append(
-                f"👤 {employee_name}\n"
+            hours = minutes // 60
+            mins = minutes % 60
+            geo_text = "есть" if row.get("latitude") and row.get("longitude") else "нет"
+
+            shift_text = (
                 f"📍 Объект: {location}\n"
                 f"🔧 Тип: {work_type}\n"
                 f"🚜 Техника: {equipment or '—'}\n"
                 f"🕐 {human_dt(start_time)} → {end_text}\n"
                 f"⏱ {hours} ч. {mins} мин.\n"
-                f"{status_text}"
-                f"{geo_line}"
+                f"{status_text}\n"
+                f"📌 Геометка: {geo_text}"
             )
-        else:
+
+            employee_blocks.setdefault(employee_name, []).append(shift_text)
+
+        lines = []
+        for employee_name, shifts in employee_blocks.items():
+            emp_total = employee_totals.get(employee_name, 0)
+            emp_hours = emp_total // 60
+            emp_mins = emp_total % 60
+
+            lines.append(
+                f"👤 {employee_name}\n\n"
+                + "\n\n".join(shifts)
+                + f"\n\nИтого по сотруднику: {emp_hours} ч. {emp_mins} мин."
+            )
+
+    else:
+        lines = []
+
+        for row in rows:
+            work_type = row.get("work_type", "—")
+            location = row.get("location", "—")
+            equipment = row.get("equipment", "—")
+            start_time = str(row.get("start_time", "")).strip()
+            end_time = str(row.get("end_time", "")).strip()
+            status = str(row.get("status", "")).strip().lower()
+            duration_raw = row.get("duration_raw_minutes", 0)
+
+            minutes = 0
+
+            if status == "open":
+                try:
+                    start_dt = parse_dt(start_time)
+                    minutes = max(0, int((now - start_dt).total_seconds() // 60))
+                except Exception:
+                    minutes = 0
+                status_text = "🟢 На смене"
+                end_text = "сейчас"
+            else:
+                try:
+                    if start_time and end_time:
+                        start_dt = parse_dt(start_time)
+                        end_dt = parse_dt(end_time)
+                        minutes = max(0, int((end_dt - start_dt).total_seconds() // 60))
+                    else:
+                        minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
+                except Exception:
+                    try:
+                        minutes = int(float(duration_raw)) if str(duration_raw).strip() else 0
+                    except (ValueError, TypeError):
+                        minutes = 0
+
+                status_text = "✅ Закрыта"
+                end_text = human_dt(end_time) if end_time else "—"
+
+            total_minutes += minutes
+            hours = minutes // 60
+            mins = minutes % 60
+            geo_text = "есть" if row.get("latitude") and row.get("longitude") else "нет"
+
             lines.append(
                 f"📍 Объект: {location}\n"
                 f"🔧 Тип: {work_type}\n"
                 f"🚜 Техника: {equipment or '—'}\n"
                 f"🕐 {human_dt(start_time)} → {end_text}\n"
                 f"⏱ {hours} ч. {mins} мин.\n"
-                f"{status_text}"
-                f"{geo_line}"
+                f"{status_text}\n"
+                f"📌 Геометка: {geo_text}"
             )
 
     total_hours = total_minutes // 60
     total_mins = total_minutes % 60
 
     await message.answer(
-        title + "\n\n" + "\n\n".join(lines) + f"\n\nИтого: {total_hours} ч. {total_mins} мин.",
+        title + "\n\n" + "\n\n".join(lines) + f"\n\nИтого общий: {total_hours} ч. {total_mins} мин.",
         reply_markup=menu_for_user(sheets, message.from_user.id),
         parse_mode="HTML",
     )
