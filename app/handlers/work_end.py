@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
 from app.keyboards.main_menu import cancel_keyboard
 from app.services.sheets import SheetsClient
@@ -29,6 +29,17 @@ def parse_dt(value: str) -> datetime:
 def round_hours_from_minutes(minutes: int) -> float:
     hours = minutes / 60
     return round(hours * 2) / 2
+
+
+def end_comment_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Нет")],
+            [KeyboardButton(text="❌ Отмена")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
 
 
 @router.message(F.text == "🔴 Закончил работу")
@@ -61,8 +72,8 @@ async def work_end_description(message: Message, state: FSMContext, sheets: Shee
     await state.update_data(description=message.text.strip())
     await state.set_state(EndWork.comment)
     await message.answer(
-        "💬 Комментарий к завершению (или напиши «нет»):",
-        reply_markup=cancel_keyboard(),
+        "💬 Комментарий к завершению:",
+        reply_markup=end_comment_keyboard(),
     )
 
 
@@ -115,7 +126,7 @@ async def work_end_comment(message: Message, state: FSMContext, sheets: SheetsCl
         duration_minutes = 0
 
     rounded_hours = round_hours_from_minutes(duration_minutes)
-    comment = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
+    comment = "" if message.text.strip() == "Нет" else message.text.strip()
 
     try:
         sheets.close_shift(
