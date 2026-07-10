@@ -17,12 +17,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.keyboards.main_menu import admin_menu_keyboard, cancel_keyboard
 from app.services.sheets import SheetsClient
-from app.states.workday import AdminAddShift, AdminCloseShift
+from app.states.workday import AdminAddShift, AdminCloseShift, AdminBroadcast
 
 router = Router()
-
-WORK_TYPES = ["Поле", "Ремонт", "Закуп", "Дом", "Другое"]
 TZ = ZoneInfo("Asia/Bangkok")
+MANUAL_INPUT_BUTTON = "✍️ Ввести вручную"
 
 
 class DatePickCallback(CallbackData, prefix="dp"):
@@ -95,12 +94,6 @@ def build_geo_lines(row: dict) -> str:
     )
 
 
-def work_type_keyboard() -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text=w)] for w in WORK_TYPES]
-    rows.append([KeyboardButton(text="❌ Отмена")])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
-
-
 def employee_keyboard(employees: list[dict]) -> ReplyKeyboardMarkup:
     rows = []
     for emp in employees:
@@ -108,6 +101,16 @@ def employee_keyboard(employees: list[dict]) -> ReplyKeyboardMarkup:
         name = str(emp.get("employee_name", "")).strip()
         if code and name:
             rows.append([KeyboardButton(text=f"{name} [{code}]")])
+
+    rows.append([KeyboardButton(text="❌ Отмена")])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def options_keyboard(items: list[str], add_manual: bool = True) -> ReplyKeyboardMarkup:
+    rows = [[KeyboardButton(text=item)] for item in items]
+
+    if add_manual:
+        rows.append([KeyboardButton(text=MANUAL_INPUT_BUTTON)])
 
     rows.append([KeyboardButton(text="❌ Отмена")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
@@ -220,6 +223,8 @@ def time_keyboard(target: str) -> InlineKeyboardMarkup:
         AdminAddShift.end_time,
         AdminCloseShift.end_date,
         AdminCloseShift.end_time,
+        AdminBroadcast.target_select,
+        AdminBroadcast.message_text,
     ),
 )
 async def admin_calendar_cancel(message: Message, state: FSMContext) -> None:
@@ -263,6 +268,88 @@ async def who_is_working(message: Message, sheets: SheetsClient) -> None:
         "👥 Кто сейчас на смене:\n\n" + "\n\n".join(lines),
         reply_markup=admin_menu_keyboard(),
         parse_mode="HTML",
+    )
+
+
+@router.message(F.text == "📣 Написать всем")
+async def broadcast_all_begin(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
+    if not sheets.is_admin(message.from_user.id):
+        await message.answer("⛔ Команда доступна только администратору.")
+        return
+
+    await state.clear()
+    await state.update_data(broadcast_target="all")
+    await state.set_state(AdminBroadcast.message_text)
+    await message.answer(
+        "Введите сообщение для всех сотрудников, у кого подключен бот:",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.message(F.text == "📣 Написать кто на смене")
+async def broadcast_active_begin(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
+    if not sheets.is_admin(message.from_user.id):
+        await message.answer("⛔ Команда доступна только администратору.")
+        return
+
+    await state.clear()
+    await state.update_data(broadcast_target="active")
+    await state.set_state(AdminBroadcast.message_text)
+    await message.answer(
+        "Введите сообщение для сотрудников, которые сейчас на смене:",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.message(AdminBroadcast.message_text)
+async def broadcast_send(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
+        return
+
+    data = await state.get_data()
+    target = data.get("broadcast_target")
+    text = message.text.strip()
+
+    if not text:
+        await message.answer("Сообщение пустое. Введи текст или нажми «❌ Отмена».")
+        return
+
+    if target == "all":
+        recipient_ids = sheets.get_all_employee_telegram_ids()
+        title = "📢 Сообщение от администратора"
+    else:
+        recipient_ids = sheets.get_active_shift_telegram_ids()
+        title = "📢 Сообщение от администратора для сотрудников на смене"
+
+    if not recipient_ids:
+        await state.clear()
+        await message.answer(
+            "❌ Не найдено получателей для рассылки.",
+            reply_markup=admin_menu_keyboard(),
+        )
+        return
+
+    sent_count = 0
+    fail_count = 0
+
+    for tg_id in recipient_ids:
+        try:
+            await message.bot.send_message(
+                tg_id,
+                f"{title}\n\n{text}",
+            )
+            sent_count += 1
+        except Exception:
+            fail_count += 1
+
+    await state.clear()
+    await message.answer(
+        f"✅ Рассылка завершена.\n\n"
+        f"Отправлено: {sent_count}\n"
+        f"Не доставлено: {fail_count}",
+        reply_markup=admin_menu_keyboard(),
     )
 
 
@@ -436,6 +523,7 @@ async def admin_add_end_time(
     callback: CallbackQuery,
     callback_data: TimePickCallback,
     state: FSMContext,
+    sheets: SheetsClient,
 ) -> None:
     data = await state.get_data()
     start_dt = parse_dt(data["start_time"])
@@ -446,41 +534,112 @@ async def admin_add_end_time(
         await callback.answer("Окончание должно быть позже начала", show_alert=True)
         return
 
-    await state.update_data(end_time=format_dt(end_dt))
+    locations = sheets.get_locations()
+    if not locations:
+        await state.clear()
+        await callback.message.answer(
+            "❌ Список объектов пуст. Заполните лист locations.",
+            reply_markup=admin_menu_keyboard(),
+        )
+        await callback.answer()
+        return
+
+    await state.update_data(
+        end_time=format_dt(end_dt),
+        locations=locations,
+        location_manual=False,
+    )
     await state.set_state(AdminAddShift.location)
     await callback.message.edit_text(
-        f"Окончание: {format_dt(end_dt)}\n\nУкажи объект или локацию:"
+        f"Окончание: {format_dt(end_dt)}\n\nВыбери объект или нажми «✍️ Ввести вручную»:"
     )
-    await callback.message.answer("Укажи объект или локацию:", reply_markup=cancel_keyboard())
+    await callback.message.answer(
+        "📍 Выбери объект или нажми «✍️ Ввести вручную»:",
+        reply_markup=options_keyboard(locations, add_manual=True),
+    )
     await callback.answer()
 
 
 @router.message(AdminAddShift.location)
-async def admin_add_shift_location(message: Message, state: FSMContext) -> None:
+async def admin_add_shift_location(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
         return
 
-    await state.update_data(location=message.text.strip())
+    data = await state.get_data()
+    locations = data.get("locations", [])
+
+    if message.text == MANUAL_INPUT_BUTTON:
+        await state.update_data(location_manual=True)
+        await message.answer("✍️ Введи объект или локацию вручную:", reply_markup=cancel_keyboard())
+        return
+
+    if locations and not data.get("location_manual") and message.text not in locations:
+        await message.answer(
+            "Выбери объект кнопкой или нажми «✍️ Ввести вручную».",
+            reply_markup=options_keyboard(locations, add_manual=True),
+        )
+        return
+
+    work_types = sheets.get_work_types()
+    if not work_types:
+        await state.clear()
+        await message.answer("❌ Список типов работ пуст. Заполните лист work_types.", reply_markup=admin_menu_keyboard())
+        return
+
+    await state.update_data(
+        location=message.text.strip(),
+        location_manual=False,
+        work_types=work_types,
+        work_type_manual=False,
+    )
     await state.set_state(AdminAddShift.work_type)
-    await message.answer("Выбери тип работы:", reply_markup=work_type_keyboard())
+    await message.answer(
+        "🔧 Выбери тип работы или нажми «✍️ Ввести вручную»:",
+        reply_markup=options_keyboard(work_types, add_manual=True),
+    )
 
 
 @router.message(AdminAddShift.work_type)
-async def admin_add_shift_work_type(message: Message, state: FSMContext) -> None:
+async def admin_add_shift_work_type(message: Message, state: FSMContext, sheets: SheetsClient) -> None:
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
         return
 
-    if message.text not in WORK_TYPES:
-        await message.answer("Выбери тип работы кнопкой.")
+    data = await state.get_data()
+    work_types = data.get("work_types", [])
+
+    if message.text == MANUAL_INPUT_BUTTON:
+        await state.update_data(work_type_manual=True)
+        await message.answer("✍️ Введи тип работы вручную:", reply_markup=cancel_keyboard())
         return
 
-    await state.update_data(work_type=message.text.strip())
+    if work_types and not data.get("work_type_manual") and message.text not in work_types:
+        await message.answer(
+            "Выбери тип работы кнопкой или нажми «✍️ Ввести вручную».",
+            reply_markup=options_keyboard(work_types, add_manual=True),
+        )
+        return
+
+    equipment_items = sheets.get_equipment()
+    if not equipment_items:
+        await state.clear()
+        await message.answer("❌ Список техники пуст. Заполните лист equipment.", reply_markup=admin_menu_keyboard())
+        return
+
+    await state.update_data(
+        work_type=message.text.strip(),
+        work_type_manual=False,
+        equipment_items=equipment_items,
+        equipment_manual=False,
+    )
     await state.set_state(AdminAddShift.equipment)
-    await message.answer("Укажи технику или направление (или «нет»):", reply_markup=cancel_keyboard())
+    await message.answer(
+        "🚜 Выбери технику/направление или нажми «✍️ Ввести вручную»:",
+        reply_markup=options_keyboard(equipment_items, add_manual=True),
+    )
 
 
 @router.message(AdminAddShift.equipment)
@@ -490,8 +649,22 @@ async def admin_add_shift_equipment(message: Message, state: FSMContext) -> None
         await message.answer("Отменено.", reply_markup=admin_menu_keyboard())
         return
 
-    equipment = "" if message.text.strip().lower() in ("нет", "no", "-") else message.text.strip()
-    await state.update_data(equipment=equipment)
+    data = await state.get_data()
+    equipment_items = data.get("equipment_items", [])
+
+    if message.text == MANUAL_INPUT_BUTTON:
+        await state.update_data(equipment_manual=True)
+        await message.answer("✍️ Введи технику или направление вручную:", reply_markup=cancel_keyboard())
+        return
+
+    if equipment_items and not data.get("equipment_manual") and message.text not in equipment_items:
+        await message.answer(
+            "Выбери технику кнопкой или нажми «✍️ Ввести вручную».",
+            reply_markup=options_keyboard(equipment_items, add_manual=True),
+        )
+        return
+
+    await state.update_data(equipment=message.text.strip(), equipment_manual=False)
     await state.set_state(AdminAddShift.description)
     await message.answer("Что сделал? Краткое описание работы:", reply_markup=cancel_keyboard())
 
@@ -555,6 +728,8 @@ async def admin_add_shift_comment(message: Message, state: FSMContext, sheets: S
             f"✅ Смена за сотрудника добавлена.\n\n"
             f"👤 {employee.get('employee_name', '—')}\n"
             f"📍 {data.get('location', '—')}\n"
+            f"🔧 {data.get('work_type', '—')}\n"
+            f"🚜 {data.get('equipment', '—') or '—'}\n"
             f"🕐 {human_dt(data['start_time'])} → {human_dt(data['end_time'])}\n"
             f"⏱ {duration_rounded:.1f} ч",
             reply_markup=admin_menu_keyboard(),
