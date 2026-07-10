@@ -70,7 +70,61 @@ class SheetsClient:
 
     def get_all_employees(self) -> list[dict]:
         return self.employees_sheet().get_all_records()
+        
+    def get_all_employee_telegram_ids(self) -> list[int]:
+        rows = self.get_all_employees()
+        result = []
+        seen = set()
 
+        for row in rows:
+            raw = str(row.get("telegram_id", "")).strip()
+            if not raw:
+                continue
+            try:
+                tg_id = int(raw)
+            except ValueError:
+                continue
+            if tg_id not in seen:
+                seen.add(tg_id)
+                result.append(tg_id)
+
+        return result
+
+    def get_active_shift_telegram_ids(self) -> list[int]:
+        rows = self.get_active_shifts()
+        result = []
+        seen = set()
+
+        for row in rows:
+            raw = str(row.get("telegram_id", "")).strip()
+            if not raw:
+                continue
+            try:
+                tg_id = int(raw)
+            except ValueError:
+                continue
+            if tg_id not in seen:
+                seen.add(tg_id)
+                result.append(tg_id)
+
+        return result
+
+    def get_employee_names_by_telegram_ids(self, telegram_ids: list[int]) -> dict[int, str]:
+        rows = self.get_all_employees()
+        result = {}
+
+        target_ids = {str(x) for x in telegram_ids}
+        for row in rows:
+            raw = str(row.get("telegram_id", "")).strip()
+            if raw in target_ids:
+                try:
+                    tg_id = int(raw)
+                except ValueError:
+                    continue
+                result[tg_id] = str(row.get("employee_name", "")).strip() or str(tg_id)
+
+        return result
+        
     def is_admin(self, telegram_id: int) -> bool:
         employee = self.get_employee_by_telegram(telegram_id)
         if not employee:
