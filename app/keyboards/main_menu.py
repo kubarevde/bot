@@ -19,6 +19,8 @@ def admin_menu_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📝 Добавить смену за сотрудника")],
             [KeyboardButton(text="✅ Закрыть смену за сотрудника")],
             [KeyboardButton(text="👥 Кто на смене")],
+            [KeyboardButton(text="📣 Написать всем")],
+            [KeyboardButton(text="📣 Написать кто на смене")],
         ],
         resize_keyboard=True,
     )
