@@ -33,3 +33,8 @@ class AdminCloseShift(StatesGroup):
     end_time = State()
     description = State()
     comment = State()
+
+
+class AdminBroadcast(StatesGroup):
+    target_select = State()
+    message_text = State()
